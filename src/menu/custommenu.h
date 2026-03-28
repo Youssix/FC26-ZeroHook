@@ -13,42 +13,42 @@ namespace CustomMenu {
 // ============================================================================
 struct Color {
 	float r, g, b, a;
-	Color() : r(1), g(1), b(1), a(1) {}
-	Color(float _r, float _g, float _b, float _a = 1.0f) : r(_r), g(_g), b(_b), a(_a) {}
-	Color WithAlpha(float newAlpha) const { return Color(r, g, b, newAlpha); }
+	constexpr Color() : r(1), g(1), b(1), a(1) {}
+	constexpr Color(float _r, float _g, float _b, float _a = 1.0f) : r(_r), g(_g), b(_b), a(_a) {}
+	constexpr Color WithAlpha(float newAlpha) const { return Color(r, g, b, newAlpha); }
 };
 
 namespace Colors {
 	// ====== BLUELOCK Theme - Deep Navy + Electric Blue ======
 
 	// Primary palette
-	inline const Color Primary       = { 0.05f, 0.65f, 0.91f, 1.0f };  // Electric Blue #0EA5E9
-	inline const Color PrimaryDark   = { 0.04f, 0.47f, 0.68f, 1.0f };  // Deep Blue #0B78AD
-	inline const Color PrimaryGlow   = { 0.13f, 0.83f, 0.93f, 1.0f };  // Cyan Glow #22D3EE
-	inline const Color Secondary     = { 0.94f, 0.27f, 0.27f, 1.0f };  // Red #EF4444
-	inline const Color Success       = { 0.06f, 0.73f, 0.51f, 1.0f };  // Emerald #10B981
-	inline const Color Warning       = { 0.96f, 0.62f, 0.04f, 1.0f };  // Amber #F59E0B
-	inline const Color Accent        = { 0.13f, 0.83f, 0.93f, 1.0f };  // Cyan #22D3EE
+	constexpr Color Primary       = { 0.05f, 0.65f, 0.91f, 1.0f };  // Electric Blue #0EA5E9
+	constexpr Color PrimaryDark   = { 0.04f, 0.47f, 0.68f, 1.0f };  // Deep Blue #0B78AD
+	constexpr Color PrimaryGlow   = { 0.13f, 0.83f, 0.93f, 1.0f };  // Cyan Glow #22D3EE
+	constexpr Color Secondary     = { 0.94f, 0.27f, 0.27f, 1.0f };  // Red #EF4444
+	constexpr Color Success       = { 0.06f, 0.73f, 0.51f, 1.0f };  // Emerald #10B981
+	constexpr Color Warning       = { 0.96f, 0.62f, 0.04f, 1.0f };  // Amber #F59E0B
+	constexpr Color Accent        = { 0.13f, 0.83f, 0.93f, 1.0f };  // Cyan #22D3EE
 
 	// Backgrounds - Deep Navy
-	inline const Color Background    = { 0.04f, 0.055f, 0.10f, 0.98f }; // #0A0E1A
-	inline const Color Surface       = { 0.07f, 0.09f, 0.15f, 1.0f };  // #111827
-	inline const Color SurfaceHover  = { 0.12f, 0.16f, 0.22f, 1.0f };  // #1F2937
-	inline const Color SurfaceActive = { 0.17f, 0.22f, 0.31f, 1.0f };  // #2C3850
+	constexpr Color Background    = { 0.04f, 0.055f, 0.10f, 0.98f }; // #0A0E1A
+	constexpr Color Surface       = { 0.07f, 0.09f, 0.15f, 1.0f };  // #111827
+	constexpr Color SurfaceHover  = { 0.12f, 0.16f, 0.22f, 1.0f };  // #1F2937
+	constexpr Color SurfaceActive = { 0.17f, 0.22f, 0.31f, 1.0f };  // #2C3850
 
 	// Sidebar
-	inline const Color Sidebar       = { 0.05f, 0.065f, 0.11f, 1.0f }; // Slightly darker than bg
-	inline const Color SidebarHover  = { 0.08f, 0.11f, 0.18f, 1.0f };
-	inline const Color SidebarActive = { 0.05f, 0.65f, 0.91f, 0.12f }; // Primary at 12% opacity
+	constexpr Color Sidebar       = { 0.05f, 0.065f, 0.11f, 1.0f }; // Slightly darker than bg
+	constexpr Color SidebarHover  = { 0.08f, 0.11f, 0.18f, 1.0f };
+	constexpr Color SidebarActive = { 0.05f, 0.65f, 0.91f, 0.12f }; // Primary at 12% opacity
 
 	// Text
-	inline const Color Text          = { 0.97f, 0.98f, 0.99f, 1.0f };  // #F8FAFC
-	inline const Color TextSecondary = { 0.58f, 0.64f, 0.72f, 1.0f };  // #94A3B8
-	inline const Color TextDisabled  = { 0.28f, 0.33f, 0.42f, 1.0f };  // #475569
+	constexpr Color Text          = { 0.97f, 0.98f, 0.99f, 1.0f };  // #F8FAFC
+	constexpr Color TextSecondary = { 0.58f, 0.64f, 0.72f, 1.0f };  // #94A3B8
+	constexpr Color TextDisabled  = { 0.28f, 0.33f, 0.42f, 1.0f };  // #475569
 
 	// Borders
-	inline const Color Border        = { 0.12f, 0.16f, 0.22f, 1.0f };  // #1E293B
-	inline const Color BorderHover   = { 0.20f, 0.25f, 0.33f, 1.0f };  // #334155
+	constexpr Color Border        = { 0.12f, 0.16f, 0.22f, 1.0f };  // #1E293B
+	constexpr Color BorderHover   = { 0.20f, 0.25f, 0.33f, 1.0f };  // #334155
 }
 
 // ============================================================================

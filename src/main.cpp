@@ -13,18 +13,18 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
     if (fdwReason == DLL_PROCESS_ATTACH)
     {
-        log::to_file("[Ring-1] FC26-ZeroHook injected\r\n");
+        log::to_file("[ZeroHook] FC26-ZeroHook injected\r\n");
 
         // Resolve all offsets first (game module, spoof gadget, swapchain, input reader)
         if (!offsets::Init())
         {
-            log::to_file("[Ring-1] ABORT: offsets::Init() failed\r\n");
+            log::debug("[ZeroHook] ABORT: offsets::Init() failed\r\n");
             return TRUE;
         }
 
         if (!comms::test_channel())
         {
-            log::to_file("[Ring-1] ABORT: NtClose channel not working\r\n");
+            log::debug("[ZeroHook] ABORT: NtClose channel not working\r\n");
             return TRUE;
         }
 

@@ -78,7 +78,7 @@ namespace ept
     {
         char buf[256];
 
-        fmt::snprintf(buf, sizeof(buf), "[Ring-1] %s: %p\r\n", name, target);
+        fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s: %p\r\n", name, target);
         log::to_file(buf);
 
         // Follow JMP chain (including hot-patch NOPs before JMPs)
@@ -96,7 +96,7 @@ namespace ept
             {
                 int rel = *(int*)(target + 1);
                 unsigned char* next = target + 5 + rel;
-                fmt::snprintf(buf, sizeof(buf), "[Ring-1] %s: E9 chain %p -> %p\r\n", name, target, next);
+                fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s: E9 chain %p -> %p\r\n", name, target, next);
                 log::to_file(buf);
                 target = next;
             }
@@ -114,7 +114,7 @@ namespace ept
         }
 
         fmt::snprintf(buf, sizeof(buf),
-            "[Ring-1] %s prologue: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+            "[ZeroHook] %s prologue: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
             name,
             target[0], target[1], target[2],  target[3],  target[4],
             target[5], target[6], target[7],  target[8],  target[9],
@@ -124,7 +124,7 @@ namespace ept
         auto reloc_result = reloc::relocate_displaced(target, (unsigned long long)target);
         if (!reloc_result.ok)
         {
-            log::to_file("[Ring-1] FAIL: displaced byte relocation failed\r\n");
+            log::to_file("[ZeroHook] FAIL: displaced byte relocation failed\r\n");
             return false;
         }
 
@@ -154,7 +154,7 @@ namespace ept
 
         ntclose_syscall(NTCLOSE_MAGIC, (unsigned long long)&req);
 
-        fmt::snprintf(buf, sizeof(buf), "[Ring-1] %s hook: status=%u, result=%llu\r\n",
+        fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s hook: status=%u, result=%llu\r\n",
                   name, req.status, req.result);
         log::to_file(buf);
 

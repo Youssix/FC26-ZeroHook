@@ -58,7 +58,7 @@ namespace
 bool sliders::InitOffsets(void* gameBase, unsigned long gameSize)
 {
     char buf[128];
-    log::to_file("[SLIDERS] Scanning patterns...\r\n");
+    log::debug("[SLIDERS] Scanning patterns...\r\n");
 
     // 1. slider_buffer_fnc
     void* m1 = game::pattern_scan(gameBase, gameSize,
@@ -66,9 +66,9 @@ bool sliders::InitOffsets(void* gameBase, unsigned long gameSize)
     if (m1) {
         slider_buffer_fnc = (uintptr_t)m1;
         fmt::snprintf(buf, sizeof(buf), "[SLIDERS] slider_buffer_fnc: %p\r\n", (void*)slider_buffer_fnc);
-        log::to_file(buf);
+        log::debug(buf);
     } else {
-        log::to_file("[SLIDERS] ERROR: slider_buffer_fnc not found\r\n");
+        log::debug("[SLIDERS] ERROR: slider_buffer_fnc not found\r\n");
     }
 
     // 2. g_pInGameDB (RIP-relative resolve)
@@ -77,14 +77,14 @@ bool sliders::InitOffsets(void* gameBase, unsigned long gameSize)
     if (m2) {
         InGameDB = resolve_rip3_7((uintptr_t)m2);
         fmt::snprintf(buf, sizeof(buf), "[SLIDERS] InGameDB: %p\r\n", (void*)InGameDB);
-        log::to_file(buf);
+        log::debug(buf);
     } else {
-        log::to_file("[SLIDERS] ERROR: InGameDB not found\r\n");
+        log::debug("[SLIDERS] ERROR: InGameDB not found\r\n");
     }
 
     bool ok = slider_buffer_fnc && InGameDB;
     fmt::snprintf(buf, sizeof(buf), "[SLIDERS] InitOffsets: %s\r\n", ok ? "ALL OK" : "SOME MISSING");
-    log::to_file(buf);
+    log::debug(buf);
     return ok;
 }
 
@@ -161,7 +161,7 @@ void sliders::RefreshPlayerNames()
 void sliders::ApplySliders()
 {
     if (!rage::msg_dispatcher || !rage::dispatch_vfunc) {
-        log::to_file("[SLIDERS] ApplySliders: dispatch not ready\r\n");
+        log::debug("[SLIDERS] ApplySliders: dispatch not ready\r\n");
         return;
     }
 
@@ -172,7 +172,7 @@ void sliders::ApplySliders()
             rcx = *reinterpret_cast<uintptr_t*>(ptr);
     }
     if (!rcx) {
-        log::to_file("[SLIDERS] ApplySliders: msg_dispatcher deref null\r\n");
+        log::debug("[SLIDERS] ApplySliders: msg_dispatcher deref null\r\n");
         return;
     }
 
@@ -296,7 +296,7 @@ void sliders::ApplySliders()
     hook::g_allow_attack_send = false;
 
     toast::Show(toast::Type::Success, "Sliders applied");
-    log::to_file("[SLIDERS] ApplySliders sent\r\n");
+    log::debug("[SLIDERS] ApplySliders sent\r\n");
 }
 
 // ── SwapSettings ─────────────────────────────────────────────────────

@@ -67,7 +67,7 @@ namespace
                 char buf[128];
                 fmt::snprintf(buf, sizeof(buf),
                     "[CHAMP] a3=%d -> %d | spoof ON\r\n", a3, final_a3);
-                log::to_file(buf);
+                log::debug(buf);
                 toast::Show(toast::Type::Success, "WL Score spoof active");
                 s_logged = true;
             }
@@ -83,47 +83,47 @@ bool champions::Init(void* gameBase, unsigned long gameSize)
     initialized = false;
 
     if (!gameBase || !gameSize) {
-        log::to_file("[CHAMP] Init: no game module\r\n");
+        log::debug("[CHAMP] Init: no game module\r\n");
         return false;
     }
 
-    log::to_file("[CHAMP] Scanning champions vtable pattern...\r\n");
+    log::debug("[CHAMP] Scanning champions vtable pattern...\r\n");
 
     void* match = game::pattern_scan(gameBase, gameSize,
         "48 8D 0D ? ? ? ? 45 33 FF 41 8B C7");
     if (!match) {
-        log::to_file("[CHAMP] ERROR: champions vtable pattern not found\r\n");
+        log::debug("[CHAMP] ERROR: champions vtable pattern not found\r\n");
         return false;
     }
 
     g_vtableBase = resolve_rip3_7((uintptr_t)match);
     if (!g_vtableBase) {
-        log::to_file("[CHAMP] ERROR: RIP resolve failed\r\n");
+        log::debug("[CHAMP] ERROR: RIP resolve failed\r\n");
         return false;
     }
 
     fmt::snprintf(buf, sizeof(buf), "[CHAMP] vtable base: %p\r\n", (void*)g_vtableBase);
-    log::to_file(buf);
+    log::debug(buf);
 
     // Read slot 53 function pointer
     __try {
         uintptr_t* vtable = reinterpret_cast<uintptr_t*>(g_vtableBase);
         g_targetFunc = vtable[53];
     } __except(1) {
-        log::to_file("[CHAMP] ERROR: cannot read vtable slot 53\r\n");
+        log::debug("[CHAMP] ERROR: cannot read vtable slot 53\r\n");
         return false;
     }
 
     if (!g_targetFunc) {
-        log::to_file("[CHAMP] ERROR: slot 53 is null\r\n");
+        log::debug("[CHAMP] ERROR: slot 53 is null\r\n");
         return false;
     }
 
     fmt::snprintf(buf, sizeof(buf), "[CHAMP] slot 53 func: %p\r\n", (void*)g_targetFunc);
-    log::to_file(buf);
+    log::debug(buf);
 
     initialized = true;
-    log::to_file("[CHAMP] Init OK (pattern scan done, hook not installed yet)\r\n");
+    log::debug("[CHAMP] Init OK (pattern scan done, hook not installed yet)\r\n");
     return true;
 }
 
@@ -135,12 +135,12 @@ bool champions::IsReady()
 bool champions::InstallHook()
 {
     if (!initialized || !g_targetFunc) {
-        log::to_file("[CHAMP] InstallHook: not initialized\r\n");
+        log::debug("[CHAMP] InstallHook: not initialized\r\n");
         return false;
     }
 
     if (g_hooked) {
-        log::to_file("[CHAMP] InstallHook: already installed\r\n");
+        log::debug("[CHAMP] InstallHook: already installed\r\n");
         return true;
     }
 
@@ -150,10 +150,10 @@ bool champions::InstallHook()
 
     if (ok) {
         g_hooked = true;
-        log::to_file("[CHAMP] EPT hook installed on slot 53 function\r\n");
+        log::debug("[CHAMP] EPT hook installed on slot 53 function\r\n");
         toast::Show(toast::Type::Success, "Champions hook active");
     } else {
-        log::to_file("[CHAMP] ERROR: EPT hook install failed\r\n");
+        log::debug("[CHAMP] ERROR: EPT hook install failed\r\n");
         toast::Show(toast::Type::Error, "Champions hook failed");
     }
 

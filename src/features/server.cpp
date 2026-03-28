@@ -168,22 +168,22 @@ namespace
     {
         uintptr_t qosMgr = GetQosPingManager();
         if (!qosMgr) {
-            log::to_file("[SERVER] ModifyLatencyMap: QosPingManager null\r\n");
+            log::debug("[SERVER] ModifyLatencyMap: QosPingManager null\r\n");
             return;
         }
 
         uintptr_t mapStart = 0, mapEnd = 0;
         if (!SafeReadPtr(qosMgr + 0x48, &mapStart) || !mapStart) {
-            log::to_file("[SERVER] ModifyLatencyMap: map start null\r\n");
+            log::debug("[SERVER] ModifyLatencyMap: map start null\r\n");
             return;
         }
         if (!SafeReadPtr(qosMgr + 0x50, &mapEnd) || !mapEnd) {
-            log::to_file("[SERVER] ModifyLatencyMap: map end null\r\n");
+            log::debug("[SERVER] ModifyLatencyMap: map end null\r\n");
             return;
         }
 
         if (mapEnd <= mapStart || (mapEnd - mapStart) > 0x10000) {
-            log::to_file("[SERVER] ModifyLatencyMap: invalid map range\r\n");
+            log::debug("[SERVER] ModifyLatencyMap: invalid map range\r\n");
             return;
         }
 
@@ -191,7 +191,7 @@ namespace
         char buf[256];
         fmt::snprintf(buf, sizeof(buf), "[SERVER] ModifyLatencyMap: %d entries, target=%s\r\n",
             entryCount, targetAlias);
-        log::to_file(buf);
+        log::debug(buf);
 
         bool foundTarget = false;
 
@@ -230,23 +230,23 @@ namespace
 
         if (foundTarget) {
             fmt::snprintf(buf, sizeof(buf), "[SERVER] Latency map modified: %s=5, others=999\r\n", targetAlias);
-            log::to_file(buf);
+            log::debug(buf);
         } else {
             fmt::snprintf(buf, sizeof(buf), "[SERVER] WARNING: target '%s' not found in latency map\r\n", targetAlias);
-            log::to_file(buf);
+            log::debug(buf);
         }
     }
 
     void ForceDispatchQoS()
     {
         if (!g_QosPingDispatchAddr) {
-            log::to_file("[SERVER] ForceDispatchQoS: dispatch addr null\r\n");
+            log::debug("[SERVER] ForceDispatchQoS: dispatch addr null\r\n");
             return;
         }
 
         uintptr_t qosMgr = GetQosPingManager();
         if (!qosMgr) {
-            log::to_file("[SERVER] ForceDispatchQoS: QosPingManager null\r\n");
+            log::debug("[SERVER] ForceDispatchQoS: QosPingManager null\r\n");
             return;
         }
 
@@ -256,9 +256,9 @@ namespace
 
         __try {
             spoof_call(fn, qosMgr, (unsigned char)1);
-            log::to_file("[SERVER] ForceDispatchQoS: sent\r\n");
+            log::debug("[SERVER] ForceDispatchQoS: sent\r\n");
         } __except (1) {
-            log::to_file("[SERVER] ForceDispatchQoS: exception\r\n");
+            log::debug("[SERVER] ForceDispatchQoS: exception\r\n");
         }
     }
 
@@ -362,7 +362,7 @@ namespace
 
         char buf[128];
         fmt::snprintf(buf, sizeof(buf), "[SERVER] Parsed %d regions\r\n", server::regionCount);
-        log::to_file(buf);
+        log::debug(buf);
     }
 }
 
@@ -374,11 +374,11 @@ bool server::Init(void* gameBase, unsigned long gameSize)
     initialized = false;
 
     if (!gameBase || !gameSize) {
-        log::to_file("[SERVER] Init: no game module\r\n");
+        log::debug("[SERVER] Init: no game module\r\n");
         return false;
     }
 
-    log::to_file("[SERVER] Scanning patterns...\r\n");
+    log::debug("[SERVER] Scanning patterns...\r\n");
 
     // ── Pattern 1: LoginAdaptorState ──
     void* m1 = game::pattern_scan(gameBase, gameSize,
@@ -395,9 +395,9 @@ bool server::Init(void* gameBase, unsigned long gameSize)
         fmt::snprintf(buf, sizeof(buf),
             "[SERVER] LoginAdaptorState: %p, connOff=0x%02X, vtOff=0x%X\r\n",
             (void*)g_LoginAdaptorState, (unsigned int)g_ConnectionOffset, (unsigned int)g_SetPingSiteVtOff);
-        log::to_file(buf);
+        log::debug(buf);
     } else {
-        log::to_file("[SERVER] ERROR: LoginAdaptorState pattern not found\r\n");
+        log::debug("[SERVER] ERROR: LoginAdaptorState pattern not found\r\n");
     }
 
     // ── Pattern 2: ConfigManager (GetConfigMgr call site) ──
@@ -420,18 +420,18 @@ bool server::Init(void* gameBase, unsigned long gameSize)
             if (firstBytes[0] == 0x48 && firstBytes[1] == 0x8B && firstBytes[2] == 0x05) {
                 g_ConfigManager = resolve_rip(getConfigMgrFn, 3, 7);
                 fmt::snprintf(buf, sizeof(buf), "[SERVER] ConfigManager: %p\r\n", (void*)g_ConfigManager);
-                log::to_file(buf);
+                log::debug(buf);
             } else {
                 fmt::snprintf(buf, sizeof(buf),
                     "[SERVER] ERROR: getConfigMgrFn first bytes: %02X %02X %02X (expected 48 8B 05)\r\n",
                     (unsigned int)firstBytes[0], (unsigned int)firstBytes[1], (unsigned int)firstBytes[2]);
-                log::to_file(buf);
+                log::debug(buf);
             }
         } else {
-            log::to_file("[SERVER] ERROR: getConfigMgrFn resolve failed\r\n");
+            log::debug("[SERVER] ERROR: getConfigMgrFn resolve failed\r\n");
         }
     } else {
-        log::to_file("[SERVER] ERROR: ConfigManager pattern not found\r\n");
+        log::debug("[SERVER] ERROR: ConfigManager pattern not found\r\n");
     }
 
     // ── Pattern 3: GetBestPingSiteAlias ──
@@ -444,9 +444,9 @@ bool server::Init(void* gameBase, unsigned long gameSize)
 
         fmt::snprintf(buf, sizeof(buf), "[SERVER] GetAliasFn: %p, ServiceLocator: %p\r\n",
             (void*)g_GetAliasFn, (void*)g_GetServiceLocatorFn);
-        log::to_file(buf);
+        log::debug(buf);
     } else {
-        log::to_file("[SERVER] ERROR: GetBestPingSiteAlias pattern not found\r\n");
+        log::debug("[SERVER] ERROR: GetBestPingSiteAlias pattern not found\r\n");
     }
 
     // ── Pattern 4: QosPing_DispatchMeasurements ──
@@ -455,9 +455,9 @@ bool server::Init(void* gameBase, unsigned long gameSize)
     if (m4) {
         g_QosPingDispatchAddr = (uintptr_t)m4;
         fmt::snprintf(buf, sizeof(buf), "[SERVER] QosPingDispatch: %p\r\n", (void*)g_QosPingDispatchAddr);
-        log::to_file(buf);
+        log::debug(buf);
     } else {
-        log::to_file("[SERVER] ERROR: QosPing_DispatchMeasurements pattern not found\r\n");
+        log::debug("[SERVER] ERROR: QosPing_DispatchMeasurements pattern not found\r\n");
     }
 
     // ── Pattern 5: BlazeWrapper ──
@@ -466,16 +466,16 @@ bool server::Init(void* gameBase, unsigned long gameSize)
     if (m5) {
         g_BlazeWrapper = resolve_rip((uintptr_t)m5, 3, 7);
         fmt::snprintf(buf, sizeof(buf), "[SERVER] BlazeWrapper: %p\r\n", (void*)g_BlazeWrapper);
-        log::to_file(buf);
+        log::debug(buf);
     } else {
-        log::to_file("[SERVER] WARNING: BlazeWrapper pattern not found, trying fallback\r\n");
+        log::debug("[SERVER] WARNING: BlazeWrapper pattern not found, trying fallback\r\n");
         // Fallback: g_ConfigManager - 8
         if (g_ConfigManager) {
             g_BlazeWrapper = g_ConfigManager - 8;
             fmt::snprintf(buf, sizeof(buf), "[SERVER] BlazeWrapper (fallback): %p\r\n", (void*)g_BlazeWrapper);
-            log::to_file(buf);
+            log::debug(buf);
         } else {
-            log::to_file("[SERVER] ERROR: BlazeWrapper fallback failed (no ConfigManager)\r\n");
+            log::debug("[SERVER] ERROR: BlazeWrapper fallback failed (no ConfigManager)\r\n");
         }
     }
 
@@ -484,7 +484,7 @@ bool server::Init(void* gameBase, unsigned long gameSize)
     initialized = ok;
 
     fmt::snprintf(buf, sizeof(buf), "[SERVER] Init: %s\r\n", ok ? "ALL OK" : "SOME MISSING");
-    log::to_file(buf);
+    log::debug(buf);
 
     return ok;
 }
@@ -505,7 +505,7 @@ void server::SetForcedPingSite(const char* alias)
 
     char buf[256];
     fmt::snprintf(buf, sizeof(buf), "[SERVER] Forcing ping site: %s\r\n", alias);
-    log::to_file(buf);
+    log::debug(buf);
 
     // 1. Modify the QoS latency map
     ModifyLatencyMap(alias);
@@ -526,7 +526,7 @@ void server::RestorePingSite()
     enableOverride = false;
     __stosb((unsigned char*)forcedPingSite, 0, sizeof(forcedPingSite));
 
-    log::to_file("[SERVER] Ping site override restored\r\n");
+    log::debug("[SERVER] Ping site override restored\r\n");
 
     // Dispatch with original values (they'll re-measure naturally)
     ForceDispatchQoS();
@@ -553,7 +553,7 @@ void server::RefreshCurrentPingSite()
     char buf[128];
     fmt::snprintf(buf, sizeof(buf), "[SERVER] Current ping site: %s\r\n",
         currentPingSite[0] ? currentPingSite : "N/A");
-    log::to_file(buf);
+    log::debug(buf);
 }
 
 // ── EnumerateRegions ────────────────────────────────────────────────────
@@ -564,14 +564,14 @@ void server::EnumerateRegions()
     __stosb((unsigned char*)regions, 0, sizeof(regions));
 
     if (!g_ConfigManager) {
-        log::to_file("[SERVER] EnumerateRegions: ConfigManager null\r\n");
+        log::debug("[SERVER] EnumerateRegions: ConfigManager null\r\n");
         toast::Show(toast::Type::Error, "ConfigManager not found");
         return;
     }
 
     uintptr_t cfgInstance = 0;
     if (!SafeReadPtr(g_ConfigManager, &cfgInstance) || !cfgInstance) {
-        log::to_file("[SERVER] EnumerateRegions: ConfigManager deref null\r\n");
+        log::debug("[SERVER] EnumerateRegions: ConfigManager deref null\r\n");
         toast::Show(toast::Type::Error, "ConfigManager instance null");
         return;
     }
@@ -579,7 +579,7 @@ void server::EnumerateRegions()
     // Read vtable
     uintptr_t vtable = 0;
     if (!SafeReadPtr(cfgInstance, &vtable) || !vtable) {
-        log::to_file("[SERVER] EnumerateRegions: vtable null\r\n");
+        log::debug("[SERVER] EnumerateRegions: vtable null\r\n");
         return;
     }
 
@@ -587,7 +587,7 @@ void server::EnumerateRegions()
     // Signature: void(this, key, default, outBuf, bufSize)
     uintptr_t readConfigFn = 0;
     if (!SafeReadPtr(vtable + 0x38, &readConfigFn) || !readConfigFn) {
-        log::to_file("[SERVER] EnumerateRegions: ReadConfigString vtable entry null\r\n");
+        log::debug("[SERVER] EnumerateRegions: ReadConfigString vtable entry null\r\n");
         return;
     }
 
@@ -609,13 +609,13 @@ void server::EnumerateRegions()
             (char*)outBuf,
             (int)sizeof(outBuf));
     } __except (1) {
-        log::to_file("[SERVER] EnumerateRegions: ReadConfigString exception\r\n");
+        log::debug("[SERVER] EnumerateRegions: ReadConfigString exception\r\n");
         toast::Show(toast::Type::Error, "Config read failed");
         return;
     }
 
     if (!outBuf[0]) {
-        log::to_file("[SERVER] EnumerateRegions: empty result\r\n");
+        log::debug("[SERVER] EnumerateRegions: empty result\r\n");
         toast::Show(toast::Type::Warning, "No regions returned");
         return;
     }
@@ -629,7 +629,7 @@ void server::EnumerateRegions()
         truncBuf[ci] = '\0';
     }
     fmt::snprintf(logBuf, sizeof(logBuf), "[SERVER] Raw config: %s\r\n", truncBuf);
-    log::to_file(logBuf);
+    log::debug(logBuf);
 
     ParseRegionsString(outBuf);
 
@@ -689,10 +689,10 @@ void server::Disconnect()
 
     __try {
         spoof_call(fn, loginMgr, (int)0);
-        log::to_file("[SERVER] Disconnect sent\r\n");
+        log::debug("[SERVER] Disconnect sent\r\n");
         toast::Show(toast::Type::Info, "Disconnected");
     } __except (1) {
-        log::to_file("[SERVER] Disconnect exception\r\n");
+        log::debug("[SERVER] Disconnect exception\r\n");
         toast::Show(toast::Type::Error, "Disconnect failed");
     }
 }
@@ -719,10 +719,10 @@ void server::Reconnect()
 
     __try {
         spoof_call(fn, loginMgr, (int)0, (int)1, (int)0);
-        log::to_file("[SERVER] Reconnect sent\r\n");
+        log::debug("[SERVER] Reconnect sent\r\n");
         toast::Show(toast::Type::Info, "Reconnecting...");
     } __except (1) {
-        log::to_file("[SERVER] Reconnect exception\r\n");
+        log::debug("[SERVER] Reconnect exception\r\n");
         toast::Show(toast::Type::Error, "Reconnect failed");
     }
 }

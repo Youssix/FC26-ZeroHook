@@ -163,8 +163,10 @@ void Menu::EndFrame() {
 				DrawRect(m_comboX, itemY, SECTION_ACCENT_WIDTH, h, Colors::Primary);
 			}
 
-			DrawText(m_comboX + 10, itemY + (h - 16) / 2, m_comboItems[i],
-			         isSelected ? Colors::PrimaryGlow : Colors::Text);
+			const char* itemText = m_comboItems[i];
+			if (itemText)
+				DrawText(m_comboX + 10, itemY + (h - 16) / 2, itemText,
+				         isSelected ? Colors::PrimaryGlow : Colors::Text);
 
 			if (itemHover && m_input.mouseClicked) {
 				*m_comboValue = i;
@@ -781,11 +783,10 @@ bool Menu::Combo(const char* label, int* currentIndex, const char** items, int i
 	float comboX = m_contentX + contentW - comboW;
 	float comboY = y;
 
-	// Block hover/click on the combo box when dropdown is open for a DIFFERENT combo
 	bool isHover = m_input.IsInRect(comboX, comboY, comboW, h);
 	if (isHover) SetHot(id);
 
-	// Label
+	// Label text
 	DrawText(m_contentX, y + (h - 16) / 2, label, Colors::TextSecondary);
 
 	// Combo box background
@@ -797,9 +798,10 @@ bool Menu::Combo(const char* label, int* currentIndex, const char** items, int i
 	// Current selection text
 	const char* currentText = (*currentIndex >= 0 && *currentIndex < itemCount)
 	                          ? items[*currentIndex] : "Select...";
+	if (!currentText) currentText = "???";
 	DrawText(comboX + 10, comboY + (h - 16) / 2, currentText, Colors::Text);
 
-	// Dropdown arrow (flip when open)
+	// Dropdown arrow
 	float arrowX = comboX + comboW - 20;
 	float arrowY = comboY + h / 2;
 	Color arrowCol = (isHover || isOpen) ? Colors::Primary : Colors::TextSecondary;

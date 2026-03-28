@@ -20,6 +20,7 @@ public:
 
 	void  Shutdown();
 	bool  IsInitialized() const { return m_initialized; }
+	void  RemapVertexBuffer();  // re-map VB after ResizeBuffers
 
 	void  DrawRect(float x, float y, float w, float h,
 	               float r, float g, float b, float a);

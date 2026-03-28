@@ -29,7 +29,7 @@ namespace {
 }
 
 void D3D12Renderer::CreateFontTexture() {
-	log::to_file("[Renderer] CreateFontTexture START\r\n");
+	log::debug("[Renderer] CreateFontTexture START\r\n");
 
 	static DWORD pixels[FONT_ATLAS_WIDTH * FONT_ATLAS_HEIGHT];
 	for (int i = 0; i < FONT_ATLAS_WIDTH * FONT_ATLAS_HEIGHT; i++) {
@@ -79,7 +79,7 @@ void D3D12Renderer::CreateFontTexture() {
 	if (FAILED(hr)) {
 		char buf[128];
 		fmt::snprintf(buf, sizeof(buf), "[Renderer] Font texture failed: 0x%08X\r\n", (unsigned)hr);
-		log::to_file(buf);
+		log::debug(buf);
 		return;
 	}
 
@@ -120,7 +120,7 @@ void D3D12Renderer::CreateFontTexture() {
 	if (FAILED(hr)) {
 		char b2[128];
 		fmt::snprintf(b2, sizeof(b2), "[Renderer] Font upload heap FAIL: 0x%08X\r\n", (unsigned)hr);
-		log::to_file(b2);
+		log::debug(b2);
 		SpoofVCall<ULONG>(m_fontTexture, com_vtable::Release);
 		m_fontTexture = nullptr;
 		return;
@@ -129,7 +129,7 @@ void D3D12Renderer::CreateFontTexture() {
 		char b2[128];
 		fmt::snprintf(b2, sizeof(b2), "[Renderer] Font upload heap=%p size=%llu\r\n",
 			m_fontUploadHeap, (unsigned long long)uploadSize);
-		log::to_file(b2);
+		log::debug(b2);
 	}
 
 	void* mapped = nullptr;
@@ -162,7 +162,7 @@ void D3D12Renderer::CreateFontTexture() {
 			m_device, (const D3D12_COMMAND_QUEUE_DESC*)&queueDesc, &iid, reinterpret_cast<void**>(&cmdQueue));
 	}
 	if (FAILED(hr)) { log::to_file("[Renderer] Font cmdQueue FAIL\r\n"); goto cleanup_texture; }
-	log::to_file("[Renderer] Font cmdQueue created\r\n");
+	log::debug("[Renderer] Font cmdQueue created\r\n");
 
 	{
 		void** vt = *reinterpret_cast<void***>(m_device);
@@ -193,7 +193,7 @@ void D3D12Renderer::CreateFontTexture() {
 			m_device, (UINT64)0, D3D12_FENCE_FLAG_NONE, &iid, reinterpret_cast<void**>(&fence));
 	}
 	if (FAILED(hr)) { log::to_file("[Renderer] Font fence FAIL\r\n"); SpoofVCall<ULONG>(cmdList, com_vtable::Release); SpoofVCall<ULONG>(cmdAlloc, com_vtable::Release); SpoofVCall<ULONG>(cmdQueue, com_vtable::Release); goto cleanup_texture; }
-	log::to_file("[Renderer] Font copy resources ready — executing GPU upload\r\n");
+	log::debug("[Renderer] Font copy resources ready — executing GPU upload\r\n");
 
 	{
 		D3D12_TEXTURE_COPY_LOCATION dst = {};
@@ -241,13 +241,13 @@ void D3D12Renderer::CreateFontTexture() {
 		spoof_call(WaitForSingleObject, (HANDLE)event, (DWORD)INFINITE);
 		spoof_call(CloseHandle, (HANDLE)event);
 	}
-	log::to_file("[Renderer] Font GPU upload complete — fence signaled\r\n");
+	log::debug("[Renderer] Font GPU upload complete — fence signaled\r\n");
 
 	SpoofVCall<ULONG>(fence, com_vtable::Release);
 	SpoofVCall<ULONG>(cmdList, com_vtable::Release);
 	SpoofVCall<ULONG>(cmdAlloc, com_vtable::Release);
 	SpoofVCall<ULONG>(cmdQueue, com_vtable::Release);
-	log::to_file("[Renderer] Font temp resources released\r\n");
+	log::debug("[Renderer] Font temp resources released\r\n");
 
 	{
 		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
@@ -259,14 +259,14 @@ void D3D12Renderer::CreateFontTexture() {
 			char b[256];
 			fmt::snprintf(b, sizeof(b), "[Renderer] Creating SRV: tex=%p cpuHandle=%llX device=%p\r\n",
 				m_fontTexture, (unsigned long long)m_fontSrvCpu.ptr, m_device);
-			log::to_file(b);
+			log::debug(b);
 		}
 		SpoofVCall(m_device, d3d12_vtable::Device::CreateShaderResourceView,
 			(ID3D12Resource*)m_fontTexture, (const D3D12_SHADER_RESOURCE_VIEW_DESC*)&srvDesc,
 			(D3D12_CPU_DESCRIPTOR_HANDLE)m_fontSrvCpu);
 	}
 
-	log::to_file("[Renderer] Font atlas created OK\r\n");
+	log::debug("[Renderer] Font atlas created OK\r\n");
 	return;
 
 cleanup_texture:
@@ -282,7 +282,7 @@ bool D3D12Renderer::Init(ID3D12Device* dev, DXGI_FORMAT rtvFormat) {
 
 	char buf[256];
 	fmt::snprintf(buf, sizeof(buf), "[Renderer] Init device=%p format=%u\r\n", dev, (unsigned)rtvFormat);
-	log::to_file(buf);
+	log::debug(buf);
 
 	// SRV Descriptor Heap
 	D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
@@ -302,7 +302,7 @@ bool D3D12Renderer::Init(ID3D12Device* dev, DXGI_FORMAT rtvFormat) {
 	{
 		char b[128];
 		fmt::snprintf(b, sizeof(b), "[Renderer] SRV heap hr=0x%08X heap=%p\r\n", (unsigned)hr, m_srvHeap);
-		log::to_file(b);
+		log::debug(b);
 	}
 	if (FAILED(hr)) return false;
 
@@ -314,7 +314,7 @@ bool D3D12Renderer::Init(ID3D12Device* dev, DXGI_FORMAT rtvFormat) {
 		char b[128];
 		fmt::snprintf(b, sizeof(b), "[Renderer] DescHandles cpu=%llX gpu=%llX\r\n",
 			(unsigned long long)m_fontSrvCpu.ptr, (unsigned long long)m_fontSrvGpu.ptr);
-		log::to_file(b);
+		log::debug(b);
 	}
 
 	// Root Signature
@@ -354,7 +354,7 @@ bool D3D12Renderer::Init(ID3D12Device* dev, DXGI_FORMAT rtvFormat) {
 	{
 		char b[128];
 		fmt::snprintf(b, sizeof(b), "[Renderer] d3d12.dll base=%p\r\n", hD3D12);
-		log::to_file(b);
+		log::debug(b);
 	}
 
 	auto pfnSerialize = (PFN_D3D12_SERIALIZE_ROOT_SIGNATURE)
@@ -363,7 +363,7 @@ bool D3D12Renderer::Init(ID3D12Device* dev, DXGI_FORMAT rtvFormat) {
 	{
 		char b[128];
 		fmt::snprintf(b, sizeof(b), "[Renderer] SerializeRootSig=%p\r\n", pfnSerialize);
-		log::to_file(b);
+		log::debug(b);
 	}
 
 	ID3DBlob* sigBlob = nullptr;
@@ -374,7 +374,7 @@ bool D3D12Renderer::Init(ID3D12Device* dev, DXGI_FORMAT rtvFormat) {
 		char b[128];
 		fmt::snprintf(b, sizeof(b), "[Renderer] SerializeRootSig hr=0x%08X blob=%p err=%p\r\n",
 			(unsigned)hr, sigBlob, errBlob);
-		log::to_file(b);
+		log::debug(b);
 	}
 	if (errBlob) SpoofVCall<ULONG>(errBlob, com_vtable::Release);
 	if (FAILED(hr)) { if (sigBlob) SpoofVCall<ULONG>(sigBlob, com_vtable::Release); return false; }
@@ -396,7 +396,7 @@ bool D3D12Renderer::Init(ID3D12Device* dev, DXGI_FORMAT rtvFormat) {
 	{
 		char b[128];
 		fmt::snprintf(b, sizeof(b), "[Renderer] CreateRootSig hr=0x%08X rootSig=%p\r\n", (unsigned)hr, m_rootSig);
-		log::to_file(b);
+		log::debug(b);
 	}
 	if (FAILED(hr)) { Shutdown(); return false; }
 
@@ -455,7 +455,7 @@ bool D3D12Renderer::Init(ID3D12Device* dev, DXGI_FORMAT rtvFormat) {
 	{
 		char b[128];
 		fmt::snprintf(b, sizeof(b), "[Renderer] CreatePSO hr=0x%08X pso=%p\r\n", (unsigned)hr, m_pso);
-		log::to_file(b);
+		log::debug(b);
 	}
 	if (FAILED(hr)) { Shutdown(); return false; }
 
@@ -488,7 +488,7 @@ bool D3D12Renderer::Init(ID3D12Device* dev, DXGI_FORMAT rtvFormat) {
 		char b[128];
 		fmt::snprintf(b, sizeof(b), "[Renderer] VertexBuffer hr=0x%08X vb=%p size=%u\r\n",
 			(unsigned)hr, m_vertexBuffer, (unsigned)bufferSize);
-		log::to_file(b);
+		log::debug(b);
 	}
 	if (FAILED(hr)) { Shutdown(); return false; }
 
@@ -498,15 +498,28 @@ bool D3D12Renderer::Init(ID3D12Device* dev, DXGI_FORMAT rtvFormat) {
 	{
 		char b[128];
 		fmt::snprintf(b, sizeof(b), "[Renderer] VB Map hr=0x%08X mapped=%p\r\n", (unsigned)hr, m_mappedVerts);
-		log::to_file(b);
+		log::debug(b);
 	}
 	if (FAILED(hr)) { Shutdown(); return false; }
 
 	CreateFontTexture();
 
 	m_initialized = true;
-	log::to_file("[Renderer] Init OK\r\n");
+	log::debug("[Renderer] Init OK\r\n");
 	return true;
+}
+
+void D3D12Renderer::RemapVertexBuffer() {
+	if (!m_vertexBuffer) return;
+	// Unmap then remap to refresh the CPU pointer after ResizeBuffers
+	if (m_mappedVerts) {
+		SpoofVCall(m_vertexBuffer, d3d12_vtable::Resource::Unmap, (UINT)0, (const D3D12_RANGE*)nullptr);
+		m_mappedVerts = nullptr;
+	}
+	D3D12_RANGE readRange = { 0, 0 };
+	HRESULT hr = SpoofVCall<HRESULT>(m_vertexBuffer, d3d12_vtable::Resource::Map,
+		(UINT)0, (const D3D12_RANGE*)&readRange, (void**)&m_mappedVerts);
+	if (FAILED(hr)) m_mappedVerts = nullptr;
 }
 
 void D3D12Renderer::BeginFrame(float width, float height) {

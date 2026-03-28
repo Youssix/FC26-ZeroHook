@@ -28,43 +28,6 @@ namespace
     bool g_bypassAFK     = false;
     bool g_noLoss        = false;
 
-    // ── Combo label arrays ──
-    // IMPORTANT: manually mapped DLL doesn't relocate .data pointers.
-    // Arrays of const char* in data sections contain UNRELOCATED addresses.
-    // Must populate at RUNTIME via code (RIP-relative lea) instead.
-    const char* g_divLabels[13];
-    const char* g_reasons[14];
-    const char* g_playstyles[3];
-    const char* g_playstyles2[3];
-    const char* g_testItems[3];
-    const char* g_difficulties[7];
-
-    void InitComboLabels()
-    {
-        // Division
-        g_divLabels[0]="None"; g_divLabels[1]="DIV 10"; g_divLabels[2]="DIV 9";
-        g_divLabels[3]="DIV 8"; g_divLabels[4]="DIV 7"; g_divLabels[5]="DIV 6";
-        g_divLabels[6]="DIV 5"; g_divLabels[7]="DIV 4"; g_divLabels[8]="DIV 3";
-        g_divLabels[9]="DIV 2"; g_divLabels[10]="DIV 1";
-        g_divLabels[11]="ELITE 500"; g_divLabels[12]="ELITE 3000";
-        // Disconnect reasons
-        g_reasons[0]="Opponent Quit"; g_reasons[1]="End Match Early";
-        g_reasons[2]="Squad Mismatch"; g_reasons[3]="Both Get Loss";
-        g_reasons[4]="Forfeit"; g_reasons[5]="Local Idle H2H";
-        g_reasons[6]="Own Goals"; g_reasons[7]="Own Goals H2H";
-        g_reasons[8]="Constrained"; g_reasons[9]="Squad Error";
-        g_reasons[10]="ID 19"; g_reasons[11]="ID 20";
-        g_reasons[12]="ID 21"; g_reasons[13]="ID 22";
-        // Playstyles
-        g_playstyles[0]="None"; g_playstyles[1]="Plus"; g_playstyles[2]="Silver";
-        g_playstyles2[0]="None"; g_playstyles2[1]="Plus"; g_playstyles2[2]="Silver";
-        // Test
-        g_testItems[0]="Option A"; g_testItems[1]="Option B"; g_testItems[2]="Option C";
-        // Squad Battles difficulties
-        g_difficulties[0]="Beginner"; g_difficulties[1]="Amateur"; g_difficulties[2]="Semi-Pro";
-        g_difficulties[3]="Professional"; g_difficulties[4]="World Class"; g_difficulties[5]="Legendary"; g_difficulties[6]="Ultimate";
-    }
-
 #ifndef STANDARD_BUILD
     // Rage hotkeys (default binds)
     int  hk_crash    = VK_F1;
@@ -145,7 +108,6 @@ namespace
 void overlay::Init(D3D12Renderer* renderer)
 {
     g_rendererPtr = renderer;
-    InitComboLabels();  // populate string pointers via RIP-relative code
     CustomMenu::g_menu.Init(renderer);
     CustomMenu::g_menu.SetOpen(true);
 
@@ -235,15 +197,28 @@ void overlay::Frame(float screenW, float screenH)
 #else
         CustomMenu::g_menu.TabDisabled("Rage",  3);
 #endif
-        CustomMenu::g_menu.Tab("AI",              4);
-        CustomMenu::g_menu.Tab("Squad Battles",  5);
-        CustomMenu::g_menu.Tab("Pro Club",       6);
-        CustomMenu::g_menu.Tab("Misc",           7);
-        CustomMenu::g_menu.Tab("Server",         8);
-        CustomMenu::g_menu.Tab("Settings",       9);
+        CustomMenu::g_menu.Tab("PC 1: Empty",    4);
+        CustomMenu::g_menu.Tab("PC 2: Toggles", 5);
+        CustomMenu::g_menu.Tab("PC 3: Combo",   6);
+        CustomMenu::g_menu.Tab("PC 4: Full",    7);
+        CustomMenu::g_menu.Tab("Server",        8);
+        CustomMenu::g_menu.Tab("Settings",      9);
         CustomMenu::g_menu.EndTabs();
 
         int tab = CustomMenu::g_menu.GetSelectedTab();
+
+        // Crash diagnostic: verbose logging on tab switch frame
+        static int s_lastLoggedTab = -1;
+        bool s_tabSwitchFrame = (tab != s_lastLoggedTab);
+        overlay::s_tabSwitchFrame = s_tabSwitchFrame;
+        if (s_tabSwitchFrame) {
+            char tbuf[64];
+            fmt::snprintf(tbuf, sizeof(tbuf), "[OVL] Rendering tab %d\r\n", tab);
+            log::to_file(tbuf);
+            s_lastLoggedTab = tab;
+        }
+
+        __try {
 
         // ===================== TAB 0: General =====================
         if (tab == 0)
@@ -307,15 +282,26 @@ void overlay::Frame(float screenW, float screenH)
         // ===================== TAB 1: FUT =====================
         else if (tab == 1)
         {
+            if (s_tabSwitchFrame) log::to_file("[TAB1] BeginSection\r\n");
             if (CustomMenu::g_menu.BeginSection("Division Rivals"))
             {
+                if (s_tabSwitchFrame) log::to_file("[TAB1] StatusIndicator\r\n");
                 CustomMenu::g_menu.StatusIndicator("System", division::IsReady());
 
+                // Division combo (always visible so user can pick a division)
+                static const char* divLabels[] = {
+                    "None", "DIV 10", "DIV 9", "DIV 8", "DIV 7", "DIV 6",
+                    "DIV 5", "DIV 4", "DIV 3", "DIV 2", "DIV 1",
+                    "ELITE 500", "ELITE 3000"
+                };
+
+                if (s_tabSwitchFrame) log::to_file("[TAB1] Combo\r\n");
                 int prevDiv = division::selectedDivision;
-                CustomMenu::g_menu.Combo("Division", &division::selectedDivision, g_divLabels, 13);
+                CustomMenu::g_menu.Combo("Division", &division::selectedDivision, divLabels, 13);
                 if (division::selectedDivision != prevDiv)
                     division::UpdateValues(division::selectedDivision);
 
+                if (s_tabSwitchFrame) log::to_file("[TAB1] IsReady check\r\n");
                 if (division::IsReady())
                 {
                     // Install hook button (one-time)
@@ -694,7 +680,13 @@ void overlay::Frame(float screenW, float screenH)
 
             if (CustomMenu::g_menu.BeginSection("Disconnect"))
             {
-                CustomMenu::g_menu.Combo("Reason", &g_dcReason, g_reasons, 14);
+                static const char* reasons[] = {
+                    "Opponent Quit", "End Match Early", "Squad Mismatch",
+                    "Both Get Loss", "Forfeit", "Local Idle H2H",
+                    "Own Goals", "Own Goals H2H", "Constrained",
+                    "Squad Error", "ID 19", "ID 20", "ID 21", "ID 22"
+                };
+                CustomMenu::g_menu.Combo("Reason", &g_dcReason, reasons, 14);
 
                 if (hk_bind_kick) {
                     CustomMenu::g_menu.Label("Press key...", CustomMenu::Colors::Warning);
@@ -737,55 +729,50 @@ void overlay::Frame(float screenW, float screenH)
         }
 #endif // !STANDARD_BUILD
 
-        // ===================== TAB 4: AI =====================
+        // ===================== TAB 4: PC 1 — Empty (just labels) =====================
         else if (tab == 4)
         {
-            if (CustomMenu::g_menu.BeginSection("AI Control"))
+            if (CustomMenu::g_menu.BeginSection("PC 1: Nothing"))
             {
-                CustomMenu::g_menu.Toggle("AI vs Opponents", &g_aiVsOpps,
-                    "Take control of AI teammates to attack opponents");
-                CustomMenu::g_menu.Toggle("Disable Opponent AI", &g_disableAi,
-                    "Remove AI control from opponent team");
-                CustomMenu::g_menu.EndSection();
-            }
-
-            if (CustomMenu::g_menu.BeginSection("AI Difficulty"))
-            {
-                CustomMenu::g_menu.Label("Requires hooks -- not yet active", CustomMenu::Colors::Warning);
+                CustomMenu::g_menu.Label("This tab has no widgets", CustomMenu::Colors::TextSecondary);
+                CustomMenu::g_menu.Label("If you see this, basic rendering works", CustomMenu::Colors::Success);
                 CustomMenu::g_menu.EndSection();
             }
         }
 
-        // ===================== TAB 5: Squad Battles =====================
+        // ===================== TAB 5: PC 2 — Toggles only =====================
         else if (tab == 5)
         {
-            if (CustomMenu::g_menu.BeginSection("Difficulty"))
+            if (CustomMenu::g_menu.BeginSection("PC 2: Toggles"))
             {
-                static int sbDifficulty = 0;
-                CustomMenu::g_menu.Combo("Difficulty", &sbDifficulty, g_difficulties, 7);
-                CustomMenu::g_menu.Label("Requires hooks -- not yet active", CustomMenu::Colors::Warning);
-                CustomMenu::g_menu.EndSection();
-            }
-
-            if (CustomMenu::g_menu.BeginSection("Match Timer"))
-            {
-                static bool freezeTimer = false;
-                CustomMenu::g_menu.Toggle("Freeze Timer", &freezeTimer);
-                CustomMenu::g_menu.Label("Requires hooks -- not yet active", CustomMenu::Colors::Warning);
-                CustomMenu::g_menu.EndSection();
-            }
-
-            if (CustomMenu::g_menu.BeginSection("Ball Control"))
-            {
-                static bool magnetBall = false;
-                CustomMenu::g_menu.Toggle("Magnet Ball", &magnetBall);
-                CustomMenu::g_menu.Label("Requires hooks -- not yet active", CustomMenu::Colors::Warning);
+                static bool t1=false,t2=false,t3=false,t4=false,t5=false,t6=false,t7=false;
+                CustomMenu::g_menu.Toggle("Toggle A", &t1);
+                CustomMenu::g_menu.Toggle("Toggle B", &t2);
+                CustomMenu::g_menu.Toggle("Toggle C", &t3);
+                CustomMenu::g_menu.Toggle("Toggle D", &t4);
+                CustomMenu::g_menu.Toggle("Toggle E", &t5);
+                CustomMenu::g_menu.Toggle("Toggle F", &t6);
+                CustomMenu::g_menu.Toggle("Toggle G", &t7);
+                CustomMenu::g_menu.Label("If you see this, toggles work", CustomMenu::Colors::Success);
                 CustomMenu::g_menu.EndSection();
             }
         }
 
-        // ===================== TAB 6: Pro Club =====================
+        // ===================== TAB 6: PC 3 — One combo only =====================
         else if (tab == 6)
+        {
+            if (CustomMenu::g_menu.BeginSection("PC 3: Single Combo"))
+            {
+                static int testSel = 0;
+                static const char* testItems[] = { "Option A", "Option B", "Option C" };
+                CustomMenu::g_menu.Combo("Test Combo", &testSel, testItems, 3);
+                CustomMenu::g_menu.Label("If you see this, combo works", CustomMenu::Colors::Success);
+                CustomMenu::g_menu.EndSection();
+            }
+        }
+
+        // ===================== TAB 7: PC 4 — Original Pro Club =====================
+        else if (tab == 7)
         {
             if (CustomMenu::g_menu.BeginSection("Pro Club Features"))
             {
@@ -811,7 +798,8 @@ void overlay::Frame(float screenW, float screenH)
             {
                 CustomMenu::g_menu.Label("Must be captain", CustomMenu::Colors::Warning);
                 static int aiPlaystyle = 0;
-                CustomMenu::g_menu.Combo("AI Playstyle", &aiPlaystyle, g_playstyles, 3);
+                static const char* playstyles[] = { "None", "Plus", "Silver" };
+                CustomMenu::g_menu.Combo("AI Playstyle", &aiPlaystyle, playstyles, 3);
                 CustomMenu::g_menu.EndSection();
             }
 
@@ -819,86 +807,10 @@ void overlay::Frame(float screenW, float screenH)
             {
                 CustomMenu::g_menu.Label("Must be captain", CustomMenu::Colors::Warning);
                 static int playerPlaystyle = 0;
-                CustomMenu::g_menu.Combo("Your Playstyle", &playerPlaystyle, g_playstyles2, 3);
+                static const char* playstyles2[] = { "None", "Plus", "Silver" };
+                CustomMenu::g_menu.Combo("Your Playstyle", &playerPlaystyle, playstyles2, 3);
                 CustomMenu::g_menu.EndSection();
             }
-        }
-
-        // ===================== TAB 7: Misc =====================
-        else if (tab == 7)
-        {
-            if (CustomMenu::g_menu.BeginSection("Camera Settings"))
-            {
-                CustomMenu::g_menu.Label("Requires hooks -- not yet active", CustomMenu::Colors::Warning);
-                CustomMenu::g_menu.EndSection();
-            }
-
-#ifndef STANDARD_BUILD
-            if (CustomMenu::g_menu.BeginSection("Hotkeys"))
-            {
-                // Crash
-                if (hk_bind_crash) {
-                    CustomMenu::g_menu.Label("Press key for Crash...", CustomMenu::Colors::Warning);
-                    int nk = hk_crash;
-                    if (menu::BindHotkeyPoll(nk, hk_bind_crash))
-                        RebindRageHotkey(hk_crash, nk, hk_do_crash);
-                } else {
-                    char hkBuf[32]; fmt::snprintf(hkBuf, sizeof(hkBuf), "Crash [%s]", menu::GetKeyName(hk_crash));
-                    if (CustomMenu::g_menu.Button(hkBuf, 200, 28))
-                        { hk_bind_crash = true; menu::gIsBindingAnyHotkey = true; }
-                }
-
-                // Freeze 1
-                if (hk_bind_freeze1) {
-                    CustomMenu::g_menu.Label("Press key for Freeze 1...", CustomMenu::Colors::Warning);
-                    int nk = hk_freeze1;
-                    if (menu::BindHotkeyPoll(nk, hk_bind_freeze1))
-                        RebindRageHotkey(hk_freeze1, nk, hk_do_freeze1);
-                } else {
-                    char hkBuf[32]; fmt::snprintf(hkBuf, sizeof(hkBuf), "Freeze 1 [%s]", menu::GetKeyName(hk_freeze1));
-                    if (CustomMenu::g_menu.Button(hkBuf, 200, 28))
-                        { hk_bind_freeze1 = true; menu::gIsBindingAnyHotkey = true; }
-                }
-
-                // Freeze 2
-                if (hk_bind_freeze2) {
-                    CustomMenu::g_menu.Label("Press key for Freeze 2...", CustomMenu::Colors::Warning);
-                    int nk = hk_freeze2;
-                    if (menu::BindHotkeyPoll(nk, hk_bind_freeze2))
-                        RebindRageHotkey(hk_freeze2, nk, hk_do_freeze2);
-                } else {
-                    char hkBuf[32]; fmt::snprintf(hkBuf, sizeof(hkBuf), "Freeze 2 [%s]", menu::GetKeyName(hk_freeze2));
-                    if (CustomMenu::g_menu.Button(hkBuf, 200, 28))
-                        { hk_bind_freeze2 = true; menu::gIsBindingAnyHotkey = true; }
-                }
-
-                // Slider Bomb
-                if (hk_bind_slider) {
-                    CustomMenu::g_menu.Label("Press key for Slider Bomb...", CustomMenu::Colors::Warning);
-                    int nk = hk_slider;
-                    if (menu::BindHotkeyPoll(nk, hk_bind_slider))
-                        RebindRageHotkey(hk_slider, nk, hk_do_slider);
-                } else {
-                    char hkBuf[32]; fmt::snprintf(hkBuf, sizeof(hkBuf), "Slider Bomb [%s]", menu::GetKeyName(hk_slider));
-                    if (CustomMenu::g_menu.Button(hkBuf, 200, 28))
-                        { hk_bind_slider = true; menu::gIsBindingAnyHotkey = true; }
-                }
-
-                // Kick
-                if (hk_bind_kick) {
-                    CustomMenu::g_menu.Label("Press key for Kick...", CustomMenu::Colors::Warning);
-                    int nk = hk_kick;
-                    if (menu::BindHotkeyPoll(nk, hk_bind_kick))
-                        RebindRageHotkey(hk_kick, nk, hk_do_kick);
-                } else {
-                    char hkBuf[32]; fmt::snprintf(hkBuf, sizeof(hkBuf), "Kick [%s]", menu::GetKeyName(hk_kick));
-                    if (CustomMenu::g_menu.Button(hkBuf, 200, 28))
-                        { hk_bind_kick = true; menu::gIsBindingAnyHotkey = true; }
-                }
-
-                CustomMenu::g_menu.EndSection();
-            }
-#endif
         }
 
         // ===================== TAB 8: Server =====================
@@ -996,10 +908,19 @@ void overlay::Frame(float screenW, float screenH)
             }
         }
 
+        } __except(1) {
+            char ebuf[64];
+            fmt::snprintf(ebuf, sizeof(ebuf), "[OVL] CRASH in tab %d!\r\n", tab);
+            log::to_file(ebuf);
+        }
+
+        if (s_tabSwitchFrame) log::to_file("[OVL] EndWindow\r\n");
         CustomMenu::g_menu.EndWindow();
     }
 
+    if (s_tabSwitchFrame) log::to_file("[OVL] EndFrame\r\n");
     CustomMenu::g_menu.EndFrame();
+    if (s_tabSwitchFrame) log::to_file("[OVL] EndFrame done\r\n");
 
     // ── Per-frame features (run even when menu is closed) ──
     if (g_rageReady && rage::slider_ptr)

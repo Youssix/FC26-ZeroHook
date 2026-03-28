@@ -94,8 +94,10 @@ namespace
 
 const char* division::GetDivisionName(int idx)
 {
-    if (idx < 0 || idx >= DIV_COUNT) return "???";
-    return divisions[idx].name;
+    // NOTE: divisions[].name contains unrelocated pointers in manually mapped DLL.
+    // Use g_divLabels from overlay.cpp instead for UI display.
+    (void)idx;
+    return "???";
 }
 
 int division::GetDivisionCount()
@@ -109,11 +111,11 @@ bool division::Init(void* gameBase, unsigned long gameSize)
     initialized = false;
 
     if (!gameBase || !gameSize) {
-        log::to_file("[DIV] Init: no game module\r\n");
+        log::debug("[DIV] Init: no game module\r\n");
         return false;
     }
 
-    log::to_file("[DIV] Scanning patterns...\r\n");
+    log::debug("[DIV] Scanning patterns...\r\n");
 
     // 1. divspoofer_vtable pattern: "48 8D 0D ? ? ? ? 33 ED 8B C5"
     //    This is a LEA RCX,[rip+disp32] that loads the vtable address
@@ -122,7 +124,7 @@ bool division::Init(void* gameBase, unsigned long gameSize)
     if (m1) {
         g_divspooferVtable = resolve_rip3_7((uintptr_t)m1);
         fmt::snprintf(buf, sizeof(buf), "[DIV] divspoofer_vtable: %p\r\n", (void*)g_divspooferVtable);
-        log::to_file(buf);
+        log::debug(buf);
 
         // Read vtable[54] -- the function we need to hook
         if (g_divspooferVtable) {
@@ -130,7 +132,7 @@ bool division::Init(void* gameBase, unsigned long gameSize)
                 uintptr_t* vtable = reinterpret_cast<uintptr_t*>(g_divspooferVtable);
                 g_divspooferFunc = vtable[54];
                 fmt::snprintf(buf, sizeof(buf), "[DIV] vtable[54] thunk: %p\r\n", (void*)g_divspooferFunc);
-                log::to_file(buf);
+                log::debug(buf);
 
                 // vtable[54] is a thunk: mov rcx, rdx (48 89 D1); jmp real_func (E9 xx xx xx xx)
                 // EPT hook needs >= 14 bytes prologue, thunk is only 8 bytes.
@@ -140,15 +142,15 @@ bool division::Init(void* gameBase, unsigned long gameSize)
                     int32_t rel = *reinterpret_cast<int32_t*>(fn + 4);
                     g_divspooferFunc = (uintptr_t)(fn + 8 + rel);
                     fmt::snprintf(buf, sizeof(buf), "[DIV] vtable[54] real func: %p\r\n", (void*)g_divspooferFunc);
-                    log::to_file(buf);
+                    log::debug(buf);
                 }
             } __except(1) {
-                log::to_file("[DIV] ERROR: exception reading vtable[54]\r\n");
+                log::debug("[DIV] ERROR: exception reading vtable[54]\r\n");
                 g_divspooferFunc = 0;
             }
         }
     } else {
-        log::to_file("[DIV] WARNING: divspoofer_vtable pattern not found\r\n");
+        log::debug("[DIV] WARNING: divspoofer_vtable pattern not found\r\n");
     }
 
     // 2. Coop Rivals pattern: "0F 84 ? ? ? ? 49 8B 45 ? 49 8B CD FF 90 ? ? ? ? 89 45"
@@ -158,9 +160,9 @@ bool division::Init(void* gameBase, unsigned long gameSize)
     if (m2) {
         g_coopRivalsAddr = (uintptr_t)m2;
         fmt::snprintf(buf, sizeof(buf), "[DIV] coop_rivals_addr: %p\r\n", (void*)g_coopRivalsAddr);
-        log::to_file(buf);
+        log::debug(buf);
     } else {
-        log::to_file("[DIV] WARNING: coop_rivals pattern not found\r\n");
+        log::debug("[DIV] WARNING: coop_rivals pattern not found\r\n");
     }
 
     initialized = (g_divspooferFunc != 0);
@@ -169,7 +171,7 @@ bool division::Init(void* gameBase, unsigned long gameSize)
         initialized ? "OK" : "PARTIAL",
         g_divspooferFunc != 0 ? 1 : 0,
         g_coopRivalsAddr != 0 ? 1 : 0);
-    log::to_file(buf);
+    log::debug(buf);
 
     return initialized;
 }
@@ -182,12 +184,12 @@ bool division::IsReady()
 bool division::InstallHook()
 {
     if (!initialized || !g_divspooferFunc) {
-        log::to_file("[DIV] InstallHook: not initialized\r\n");
+        log::debug("[DIV] InstallHook: not initialized\r\n");
         return false;
     }
 
     if (g_hookInstalled) {
-        log::to_file("[DIV] InstallHook: already installed\r\n");
+        log::debug("[DIV] InstallHook: already installed\r\n");
         return true;
     }
 
@@ -197,10 +199,10 @@ bool division::InstallHook()
 
     if (ok) {
         g_hookInstalled = true;
-        log::to_file("[DIV] EPT hook installed on divspoofer vtable[54]\r\n");
+        log::debug("[DIV] EPT hook installed on divspoofer vtable[54]\r\n");
         toast::Show(toast::Type::Success, "Division spoofer hook active");
     } else {
-        log::to_file("[DIV] ERROR: EPT hook install failed\r\n");
+        log::debug("[DIV] ERROR: EPT hook install failed\r\n");
         toast::Show(toast::Type::Error, "Division hook failed");
     }
 
@@ -228,9 +230,9 @@ void division::UpdateValues(int divIndex)
     progressionRank = div.progressionRank;
 
     char buf[128];
-    fmt::snprintf(buf, sizeof(buf), "[DIV] Values: elite=%u sr=%u prog=%u (%s)\r\n",
-        isElite, srPoints, progressionRank, div.name);
-    log::to_file(buf);
+    fmt::snprintf(buf, sizeof(buf), "[DIV] Values: elite=%u sr=%u prog=%u idx=%d\r\n",
+        isElite, srPoints, progressionRank, divIndex);
+    log::debug(buf);
 }
 
 void division::SetCoopRivals(bool enable)
@@ -263,11 +265,11 @@ void division::SetCoopRivals(bool enable)
         if (req.status == 0) {
             g_coopRivalsActive = true;
             toast::Show(toast::Type::Success, "Coop Rivals enabled");
-            log::to_file("[DIV] Coop Rivals: JZ -> JNZ\r\n");
+            log::debug("[DIV] Coop Rivals: JZ -> JNZ\r\n");
         } else {
             char buf[128];
             fmt::snprintf(buf, sizeof(buf), "[DIV] Coop Rivals write failed (status=%u)\r\n", req.status);
-            log::to_file(buf);
+            log::debug(buf);
             toast::Show(toast::Type::Error, "Coop Rivals patch failed");
         }
     }
@@ -283,11 +285,11 @@ void division::SetCoopRivals(bool enable)
         if (req.status == 0) {
             g_coopRivalsActive = false;
             toast::Show(toast::Type::Info, "Coop Rivals disabled");
-            log::to_file("[DIV] Coop Rivals: restored original\r\n");
+            log::debug("[DIV] Coop Rivals: restored original\r\n");
         } else {
             char buf[128];
             fmt::snprintf(buf, sizeof(buf), "[DIV] Coop Rivals restore failed (status=%u)\r\n", req.status);
-            log::to_file(buf);
+            log::debug(buf);
             toast::Show(toast::Type::Error, "Coop Rivals restore failed");
         }
     }
@@ -310,9 +312,7 @@ void division::Apply()
 
     // If hook is installed, spoofer is live -- values will be applied automatically
     if (g_hookInstalled) {
-        char buf[80];
-        fmt::snprintf(buf, sizeof(buf), "Division set to %s", divisions[selectedDivision].name);
-        toast::Show(toast::Type::Success, buf);
+        toast::Show(toast::Type::Success, "Division spoof applied");
     } else {
         toast::Show(toast::Type::Warning, "Hook not installed - click Install Hook first");
     }

@@ -50,7 +50,7 @@ namespace
 bool rage::InitOffsets(void* gameBase, unsigned long gameSize)
 {
     char buf[128];
-    log::to_file("[RAGE] Scanning patterns...\r\n");
+    log::debug("[RAGE] Scanning patterns...\r\n");
 
     // 1. slider_ptr
     void* m1 = game::pattern_scan(gameBase, gameSize,
@@ -58,9 +58,9 @@ bool rage::InitOffsets(void* gameBase, unsigned long gameSize)
     if (m1) {
         slider_ptr = resolve_rip3_7((uintptr_t)m1);
         fmt::snprintf(buf, sizeof(buf), "[RAGE] slider_ptr: %p\r\n", (void*)slider_ptr);
-        log::to_file(buf);
+        log::debug(buf);
     } else {
-        log::to_file("[RAGE] ERROR: slider_ptr not found\r\n");
+        log::debug("[RAGE] ERROR: slider_ptr not found\r\n");
     }
 
     // 2. RubberImmediateMsgDispatcher
@@ -69,9 +69,9 @@ bool rage::InitOffsets(void* gameBase, unsigned long gameSize)
     if (m2) {
         msg_dispatcher = resolve_rip3_7((uintptr_t)m2);
         fmt::snprintf(buf, sizeof(buf), "[RAGE] msg_dispatcher: %p\r\n", (void*)msg_dispatcher);
-        log::to_file(buf);
+        log::debug(buf);
     } else {
-        log::to_file("[RAGE] ERROR: msg_dispatcher not found\r\n");
+        log::debug("[RAGE] ERROR: msg_dispatcher not found\r\n");
     }
 
     // 3. dispatch_action_vfunc
@@ -80,14 +80,14 @@ bool rage::InitOffsets(void* gameBase, unsigned long gameSize)
     if (m3) {
         dispatch_vfunc = (uintptr_t)m3;
         fmt::snprintf(buf, sizeof(buf), "[RAGE] dispatch_vfunc: %p\r\n", (void*)dispatch_vfunc);
-        log::to_file(buf);
+        log::debug(buf);
     } else {
-        log::to_file("[RAGE] ERROR: dispatch_vfunc not found\r\n");
+        log::debug("[RAGE] ERROR: dispatch_vfunc not found\r\n");
     }
 
     bool ok = slider_ptr && msg_dispatcher && dispatch_vfunc;
     fmt::snprintf(buf, sizeof(buf), "[RAGE] InitOffsets: %s\r\n", ok ? "ALL OK" : "SOME MISSING");
-    log::to_file(buf);
+    log::debug(buf);
     return ok;
 }
 
@@ -97,7 +97,7 @@ void rage::crash_opps()
 {
     uintptr_t rcx; dispatch_fn_t fn;
     if (!get_dispatch(rcx, fn)) {
-        log::to_file("[RAGE] crash_opps: dispatch not ready\r\n");
+        log::debug("[RAGE] crash_opps: dispatch not ready\r\n");
         return;
     }
 
@@ -110,7 +110,7 @@ void rage::crash_opps()
     hook::g_allow_attack_send = false;
 
     toast::Show(toast::Type::Success, "Crash sent to opponent");
-    log::to_file("[RAGE] crash_opps sent\r\n");
+    log::debug("[RAGE] crash_opps sent\r\n");
 }
 
 // ── pause_op_game (Freeze 1) ────────────────────────────────────────
@@ -118,7 +118,7 @@ void rage::pause_op_game()
 {
     uintptr_t rcx; dispatch_fn_t fn;
     if (!get_dispatch(rcx, fn)) {
-        log::to_file("[RAGE] pause_op_game: dispatch not ready\r\n");
+        log::debug("[RAGE] pause_op_game: dispatch not ready\r\n");
         return;
     }
 
@@ -133,7 +133,7 @@ void rage::pause_op_game()
     hook::g_allow_attack_send = false;
 
     toast::Show(toast::Type::Success, "Freeze 1 sent to opponent");
-    log::to_file("[RAGE] Freeze 1 sent\r\n");
+    log::debug("[RAGE] Freeze 1 sent\r\n");
 }
 
 // ── pause_op_game_new (Freeze 2) ────────────────────────────────────
@@ -141,7 +141,7 @@ void rage::pause_op_game_new()
 {
     uintptr_t rcx; dispatch_fn_t fn;
     if (!get_dispatch(rcx, fn)) {
-        log::to_file("[RAGE] pause_op_game_new: dispatch not ready\r\n");
+        log::debug("[RAGE] pause_op_game_new: dispatch not ready\r\n");
         return;
     }
 
@@ -155,7 +155,7 @@ void rage::pause_op_game_new()
     hook::g_allow_attack_send = false;
 
     toast::Show(toast::Type::Success, "Freeze 2 sent to opponent");
-    log::to_file("[RAGE] Freeze 2 sent\r\n");
+    log::debug("[RAGE] Freeze 2 sent\r\n");
 }
 
 // ── slider_bomb ─────────────────────────────────────────────────────
@@ -163,7 +163,7 @@ void rage::slider_bomb()
 {
     uintptr_t rcx; dispatch_fn_t fn;
     if (!get_dispatch(rcx, fn)) {
-        log::to_file("[RAGE] slider_bomb: dispatch not ready\r\n");
+        log::debug("[RAGE] slider_bomb: dispatch not ready\r\n");
         return;
     }
 
@@ -197,20 +197,20 @@ void rage::slider_bomb()
     hook::g_allow_attack_send = false;
 
     toast::Show(toast::Type::Success, "Slider Bomb sent to opponent");
-    log::to_file("[RAGE] slider_bomb sent\r\n");
+    log::debug("[RAGE] slider_bomb sent\r\n");
 }
 
 // ── kick_opponent ───────────────────────────────────────────────────
 void rage::kick_opponent(int dcReason)
 {
     if (!slider_ptr) {
-        log::to_file("[RAGE] kick_opponent: slider_ptr not resolved\r\n");
+        log::debug("[RAGE] kick_opponent: slider_ptr not resolved\r\n");
         return;
     }
 
     uintptr_t v0 = safe_deref(slider_ptr);
     if (!v0) {
-        log::to_file("[RAGE] kick_opponent: slider deref null\r\n");
+        log::debug("[RAGE] kick_opponent: slider deref null\r\n");
         return;
     }
 
@@ -233,6 +233,6 @@ void rage::kick_opponent(int dcReason)
 
     char buf[80];
     fmt::snprintf(buf, sizeof(buf), "[RAGE] kick_opponent sent (reason=%d)\r\n", dcReason);
-    log::to_file(buf);
+    log::debug(buf);
 }
 #endif // !STANDARD_BUILD

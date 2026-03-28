@@ -78,8 +78,8 @@ namespace
     {
         char buf[256];
 
-        fmt::snprintf(buf, sizeof(buf), "[Ring-1] %s: %p\r\n", name, target);
-        log::to_file(buf);
+        fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s: %p\r\n", name, target);
+        log::debug(buf);
 
         // Follow JMP chain to resolve through inline hooks
         for (int chain = 0; chain < 8; chain++)
@@ -88,8 +88,8 @@ namespace
             {
                 int32_t rel = *(int32_t*)(target + 1);
                 unsigned char* next = target + 5 + rel;
-                fmt::snprintf(buf, sizeof(buf), "[Ring-1] %s: E9 chain %p -> %p\r\n", name, target, next);
-                log::to_file(buf);
+                fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s: E9 chain %p -> %p\r\n", name, target, next);
+                log::debug(buf);
                 target = next;
             }
             else if (target[0] == 0xEB)
@@ -108,17 +108,17 @@ namespace
         }
 
         fmt::snprintf(buf, sizeof(buf),
-            "[Ring-1] %s prologue: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+            "[ZeroHook] %s prologue: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
             name,
             target[0], target[1], target[2],  target[3],  target[4],
             target[5], target[6], target[7],  target[8],  target[9],
             target[10], target[11], target[12], target[13], target[14], target[15]);
-        log::to_file(buf);
+        log::debug(buf);
 
         auto reloc_result = reloc::relocate_displaced(target, (unsigned long long)target);
         if (!reloc_result.ok)
         {
-            log::to_file("[Ring-1] FAIL: displaced byte relocation failed\r\n");
+            log::debug("[ZeroHook] FAIL: displaced byte relocation failed\r\n");
             return false;
         }
 
@@ -148,9 +148,9 @@ namespace
 
         ntclose_syscall(NTCLOSE_MAGIC, (unsigned long long)&req);
 
-        fmt::snprintf(buf, sizeof(buf), "[Ring-1] %s hook: status=%u, result=%llu\r\n",
+        fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s hook: status=%u, result=%llu\r\n",
                   name, req.status, req.result);
-        log::to_file(buf);
+        log::debug(buf);
 
         return req.status == 0 && req.result != 0;
     }
@@ -161,8 +161,8 @@ namespace
     {
         char buf[256];
 
-        fmt::snprintf(buf, sizeof(buf), "[Ring-1] %s: %p\r\n", name, target);
-        log::to_file(buf);
+        fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s: %p\r\n", name, target);
+        log::debug(buf);
 
         for (int chain = 0; chain < 8; chain++)
         {
@@ -170,8 +170,8 @@ namespace
             {
                 int32_t rel = *(int32_t*)(target + 1);
                 unsigned char* next = target + 5 + rel;
-                fmt::snprintf(buf, sizeof(buf), "[Ring-1] %s: E9 chain %p -> %p\r\n", name, target, next);
-                log::to_file(buf);
+                fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s: E9 chain %p -> %p\r\n", name, target, next);
+                log::debug(buf);
                 target = next;
             }
             else if (target[0] == 0xEB)
@@ -190,17 +190,17 @@ namespace
         }
 
         fmt::snprintf(buf, sizeof(buf),
-            "[Ring-1] %s prologue: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+            "[ZeroHook] %s prologue: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
             name,
             target[0], target[1], target[2],  target[3],  target[4],
             target[5], target[6], target[7],  target[8],  target[9],
             target[10], target[11], target[12], target[13], target[14], target[15]);
-        log::to_file(buf);
+        log::debug(buf);
 
         auto reloc_result = reloc::relocate_displaced(target, (unsigned long long)target);
         if (!reloc_result.ok)
         {
-            log::to_file("[Ring-1] FAIL: displaced byte relocation failed\r\n");
+            log::debug("[ZeroHook] FAIL: displaced byte relocation failed\r\n");
             return 0;
         }
 
@@ -230,9 +230,9 @@ namespace
 
         ntclose_syscall(NTCLOSE_MAGIC, (unsigned long long)&req);
 
-        fmt::snprintf(buf, sizeof(buf), "[Ring-1] %s hook: status=%u, trampoline=%p\r\n",
+        fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s hook: status=%u, trampoline=%p\r\n",
                   name, req.status, (void*)req.result);
-        log::to_file(buf);
+        log::debug(buf);
 
         return (req.status == 0) ? req.result : 0;
     }
@@ -345,7 +345,7 @@ namespace
             }
         }
 
-        log::to_file("[Present] Back buffers re-acquired (lightweight reinit)\r\n");
+        log::debug("[Present] Back buffers re-acquired (lightweight reinit)\r\n");
         return true;
     }
 
@@ -354,7 +354,7 @@ namespace
     // ── Teardown all D3D12 resources on device loss ──────────────────
     static void TeardownD3D12()
     {
-        log::to_file("[Present] TeardownD3D12 — device lost, releasing resources\r\n");
+        log::debug("[Present] TeardownD3D12 — device lost, releasing resources\r\n");
 
         g_renderer.Shutdown();
 
@@ -399,7 +399,7 @@ namespace
             char b[128];
             fmt::snprintf(b, sizeof(b), "[Present] OS build=%u cmdQueue offset=0x%llX\r\n",
                 (unsigned)build, (unsigned long long)off);
-            log::to_file(b);
+            log::debug(b);
         }
         return off;
     }
@@ -468,8 +468,10 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
         char _buf[256];
         IDXGISwapChain* sc = (IDXGISwapChain*)pSwapChain;
 
-        fmt::snprintf(_buf, sizeof(_buf), "[Present] First call — SwapChain=%p\r\n", pSwapChain);
-        log::to_file(_buf);
+        if (g_debugLog) {
+            fmt::snprintf(_buf, sizeof(_buf), "[Present] First call — SwapChain=%p\r\n", pSwapChain);
+            log::debug(_buf);
+        }
 
         HRESULT hr;
         {
@@ -480,9 +482,11 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
                 sc, &iid, reinterpret_cast<void**>(&g_d3dDevice));
         }
 
-        fmt::snprintf(_buf, sizeof(_buf), "[Present] GetDevice hr=0x%08X device=%p\r\n",
-            (unsigned)hr, g_d3dDevice);
-        log::to_file(_buf);
+        if (g_debugLog) {
+            fmt::snprintf(_buf, sizeof(_buf), "[Present] GetDevice hr=0x%08X device=%p\r\n",
+                (unsigned)hr, g_d3dDevice);
+            log::debug(_buf);
+        }
 
         if (SUCCEEDED(hr) && g_d3dDevice)
         {
@@ -497,7 +501,7 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
                 (unsigned)scDesc.BufferDesc.Format,
                 (unsigned)scDesc.BufferDesc.Width, (unsigned)scDesc.BufferDesc.Height,
                 (unsigned)g_bufferCount);
-            log::to_file(_buf);
+            log::debug(_buf);
 
             // ── Per-backbuffer command allocators (FC26: allocators first) ──
             for (UINT i = 0; i < g_bufferCount; i++) {
@@ -508,12 +512,12 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
                     g_d3dDevice, D3D12_COMMAND_LIST_TYPE_DIRECT, &iid,
                     reinterpret_cast<void**>(&g_frameCtx[i].cmdAllocator));
                 if (FAILED(hr) || !g_frameCtx[i].cmdAllocator) {
-                    log::to_file("[Present] FAIL: CreateCommandAllocator failed\r\n");
+                    log::debug("[Present] FAIL: CreateCommandAllocator failed\r\n");
                     return 0;
                 }
                 g_frameCtx[i].fenceValue = 0;
             }
-            log::to_file("[Present] Per-backbuffer allocators created\r\n");
+            log::debug("[Present] Per-backbuffer allocators created\r\n");
 
             // ── Single command list (FC26: cmdList after allocators) ──
             {
@@ -528,10 +532,10 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
             }
             if (FAILED(hr) || !g_cmdList ||
                 SpoofVCall<HRESULT>(g_cmdList, d3d12_vtable::CmdList::Close) != S_OK) {
-                log::to_file("[Present] FAIL: CreateCommandList or Close failed\r\n");
+                log::debug("[Present] FAIL: CreateCommandList or Close failed\r\n");
                 return 0;
             }
-            log::to_file("[Present] Command list created\r\n");
+            log::debug("[Present] Command list created\r\n");
 
             // ── RTV descriptor heap (FC26: explicit NodeMask=1) ──
             {
@@ -548,7 +552,7 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
                     reinterpret_cast<void**>(&g_rtvHeap));
             }
             if (FAILED(hr) || !g_rtvHeap) {
-                log::to_file("[Present] FAIL: RTV heap creation failed\r\n");
+                log::debug("[Present] FAIL: RTV heap creation failed\r\n");
                 return 0;
             }
 
@@ -580,7 +584,7 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
                 }
             }
             fmt::snprintf(_buf, sizeof(_buf), "[Present] RTV heap created with %u descriptors\r\n", g_bufferCount);
-            log::to_file(_buf);
+            log::debug(_buf);
 
             // ── Fence (FC26: fenceValue starts at 1) ──
             {
@@ -591,29 +595,29 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
                     g_d3dDevice, (UINT64)0, D3D12_FENCE_FLAG_NONE, &iid, reinterpret_cast<void**>(&g_fence));
             }
             if (FAILED(hr) || !g_fence) {
-                log::to_file("[Present] FAIL: CreateFence failed\r\n");
+                log::debug("[Present] FAIL: CreateFence failed\r\n");
                 return 0;
             }
             g_fenceValue = 1;
 
             // ── Renderer init (FC26: hardcoded DXGI_FORMAT_R8G8B8A8_UNORM) ──
-            log::to_file("[Present] Calling D3D12Renderer::Init...\r\n");
+            log::debug("[Present] Calling D3D12Renderer::Init...\r\n");
             if (!g_renderer.Init(g_d3dDevice, DXGI_FORMAT_R8G8B8A8_UNORM))
             {
-                log::to_file("[Present] FAIL: D3D12Renderer::Init returned false\r\n");
+                log::debug("[Present] FAIL: D3D12Renderer::Init returned false\r\n");
                 return 0;
             }
-            log::to_file("[Present] Renderer init OK\r\n");
+            log::debug("[Present] Renderer init OK\r\n");
 
-            log::to_file("[Present] Calling overlay::Init\r\n");
+            log::debug("[Present] Calling overlay::Init\r\n");
             overlay::Init(&g_renderer);
 
             g_rendererInitialized = true;
-            log::to_file("[Present] === INIT COMPLETE ===\r\n");
+            log::debug("[Present] === INIT COMPLETE ===\r\n");
         }
         else
         {
-            log::to_file("[Present] FAIL: GetDevice failed or device is null\r\n");
+            log::debug("[Present] FAIL: GetDevice failed or device is null\r\n");
         }
     }
 
@@ -624,10 +628,12 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
     if (g_needsBackBufferReinit) {
         g_needsBackBufferReinit = false;
         if (!ReinitBackBuffers((IDXGISwapChain*)pSwapChain)) {
-            log::to_file("[Present] Lightweight reinit failed, full teardown\r\n");
+            log::debug("[Present] Lightweight reinit failed, full teardown\r\n");
             TeardownD3D12();
             return 0;
         }
+        // Re-map vertex buffer — GPU driver may invalidate mapping after resize
+        g_renderer.RemapVertexBuffer();
     }
 
     // ── Lazy resize: detect resolution change, teardown → re-init next frame ──
@@ -640,7 +646,7 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
             char fb[128];
             fmt::snprintf(fb, sizeof(fb), "[Present] Resize detected %ux%u -> %ux%u, teardown\r\n",
                 (unsigned)g_cachedWidth, (unsigned)g_cachedHeight, (unsigned)w, (unsigned)h);
-            log::to_file(fb);
+            log::debug(fb);
             g_cachedWidth = w;
             g_cachedHeight = h;
             TeardownD3D12();
@@ -654,7 +660,7 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
         char fb[128];
         fmt::snprintf(fb, sizeof(fb), "[Present] BAIL frame=%d bbIdx=%u >= bufCount=%u\r\n",
             (int)frameNum, (unsigned)bbIdx, (unsigned)g_bufferCount);
-        log::to_file(fb);
+        log::debug(fb);
         return 0;
     }
 
@@ -673,7 +679,7 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
             char fb[128];
             fmt::snprintf(fb, sizeof(fb), "[Present] TIMEOUT frame=%d bbIdx=%u fenceVal=%llu\r\n",
                 (int)frameNum, (unsigned)bbIdx, (unsigned long long)fc.fenceValue);
-            log::to_file(fb);
+            log::debug(fb);
             return 0;
         }
         spoof_call(CloseHandle, (HANDLE)event);
@@ -687,12 +693,12 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
         char fb[128];
         fmt::snprintf(fb, sizeof(fb), "[Present] RESET FAIL frame=%d alloc=0x%08X list=0x%08X\r\n",
             (int)frameNum, (unsigned)hr1, (unsigned)hr2);
-        log::to_file(fb);
+        log::debug(fb);
         HRESULT rr = SpoofVCall<HRESULT>(g_d3dDevice, d3d12_vtable::Device::GetDeviceRemovedReason);
         if (rr != 0) {
             char fb2[128];
             fmt::snprintf(fb2, sizeof(fb2), "[Present] DEVICE REMOVED reason=0x%08X\r\n", (unsigned)rr);
-            log::to_file(fb2);
+            log::debug(fb2);
             TeardownD3D12();
         }
         return 0;
@@ -724,9 +730,7 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
         if (screenW > 0 && screenH > 0) {
             g_renderer.BeginFrame(screenW, screenH);
             overlay::Frame(screenW, screenH);
-            if (overlay::s_tabSwitchFrame) log::to_file("[Present] Overlay done, calling Render\r\n");
             g_renderer.Render(g_cmdList);
-            if (overlay::s_tabSwitchFrame) log::to_file("[Present] Render done\r\n");
         }
     }
 
@@ -742,7 +746,7 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
         char fb[128];
         fmt::snprintf(fb, sizeof(fb), "[Present] CLOSE FAIL frame=%d hr=0x%08X\r\n",
             (int)frameNum, (unsigned)hrClose);
-        log::to_file(fb);
+        log::debug(fb);
         return 0;
     }
     SpoofVCall(g_cmdQueue, d3d12_vtable::CmdQueue::ExecuteCommandLists,
@@ -767,12 +771,12 @@ extern "C" unsigned long long HookedResizeBuffers(void* ctx, void* pSwapChain,
     if (g_rendererInitialized && g_d3dDevice) {
         // 25H2 fix: lightweight release — only drop back buffer refs so
         // ResizeBuffers can succeed. Keep PSO/font/VB/fence/device alive.
-        log::to_file("[ResizeBuffers] Lightweight release (back buffers only)\r\n");
+        log::debug("[ResizeBuffers] Lightweight release (back buffers only)\r\n");
         ReleaseBackBuffersOnly();
         g_needsBackBufferReinit = true;
     } else {
         // Not initialized or no device — full teardown
-        log::to_file("[ResizeBuffers] Full teardown\r\n");
+        log::debug("[ResizeBuffers] Full teardown\r\n");
         TeardownD3D12();
     }
     g_cachedWidth = 0;
@@ -787,7 +791,7 @@ void hook::install_dxgi_hooks()
     // All offsets already resolved by offsets::Init()
     if (!offsets::SwapChain)
     {
-        log::to_file("[Ring-1] ERROR: SwapChain not resolved by offsets::Init()\r\n");
+        log::debug("[ZeroHook] ERROR: SwapChain not resolved by offsets::Init()\r\n");
         return;
     }
 
@@ -818,6 +822,6 @@ void hook::install_dxgi_hooks()
     if (offsets::FnGetMouseScroll)
         install_ept_hook((unsigned char*)offsets::FnGetMouseScroll,
             (void*)&HookedGetMouseScroll, "GetMouseScroll");
-    log::to_file("[Ring-1] Mouse input hooks RE-ENABLED (Jcc rel8 fix applied)\r\n");
+    log::debug("[ZeroHook] Mouse input hooks RE-ENABLED (Jcc rel8 fix applied)\r\n");
 
 }

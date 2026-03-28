@@ -56,16 +56,20 @@ bool offsets::Init()
     GameBase = mod.base;
     GameSize = mod.size;
 
-    fmt::snprintf(buf, sizeof(buf), "[offsets] Game: %p  size=0x%lX\r\n", GameBase, GameSize);
-    log::to_file(buf);
+    if (g_debugLog) {
+        fmt::snprintf(buf, sizeof(buf), "[offsets] Game: %p  size=0x%lX\r\n", GameBase, GameSize);
+        log::to_file(buf);
+    }
 
     // ── 2. Spoof gadget (FF 23 = jmp [rbx]) ────────────────────────
     void* gadgetMatch = game::pattern_scan(GameBase, GameSize, "E8 ? ? ? ? FF 23");
     if (gadgetMatch)
         SpoofLocation = (void*)((uintptr_t)gadgetMatch + 5);
 
-    fmt::snprintf(buf, sizeof(buf), "[offsets] SpoofLocation: %p\r\n", SpoofLocation);
-    log::to_file(buf);
+    if (g_debugLog) {
+        fmt::snprintf(buf, sizeof(buf), "[offsets] SpoofLocation: %p\r\n", SpoofLocation);
+        log::to_file(buf);
+    }
 
     // ── 3. SwapChain ────────────────────────────────────────────────
     //   Pattern: mov [rip+disp32], rdi; mov [rip+disp32], r14
@@ -81,8 +85,10 @@ bool offsets::Init()
         }
     }
 
-    fmt::snprintf(buf, sizeof(buf), "[offsets] SwapChain: %p\r\n", SwapChain);
-    log::to_file(buf);
+    if (g_debugLog) {
+        fmt::snprintf(buf, sizeof(buf), "[offsets] SwapChain: %p\r\n", SwapChain);
+        log::to_file(buf);
+    }
 
     // ── 4. Frostbite InputReader ────────────────────────────────────
     //   Pattern inside EACoreKeyboardPoller::update:
@@ -101,15 +107,19 @@ bool offsets::Init()
         }
         else
         {
-            fmt::snprintf(buf, sizeof(buf),
-                "[offsets] InputReader: unexpected opcode 0x%02X at %p\r\n",
-                *(unsigned char*)getReader, (void*)getReader);
-            log::to_file(buf);
+            if (g_debugLog) {
+                fmt::snprintf(buf, sizeof(buf),
+                    "[offsets] InputReader: unexpected opcode 0x%02X at %p\r\n",
+                    *(unsigned char*)getReader, (void*)getReader);
+                log::to_file(buf);
+            }
         }
     }
 
-    fmt::snprintf(buf, sizeof(buf), "[offsets] InputReader: %p\r\n", (void*)InputReader);
-    log::to_file(buf);
+    if (g_debugLog) {
+        fmt::snprintf(buf, sizeof(buf), "[offsets] InputReader: %p\r\n", (void*)InputReader);
+        log::to_file(buf);
+    }
 
     // ── 5. InputReader vtable functions ──────────────────────────────
     if (InputReader)
@@ -129,9 +139,11 @@ bool offsets::Init()
             FnGetMouseDeltaY   = vtable[25];
             FnGetMouseScroll   = vtable[26];
 
-            fmt::snprintf(buf, sizeof(buf), "[offsets] InputReader vtable: %p  isMouseDown=%p\r\n",
-                (void*)vtable, FnIsMouseDown);
-            log::to_file(buf);
+            if (g_debugLog) {
+                fmt::snprintf(buf, sizeof(buf), "[offsets] InputReader vtable: %p  isMouseDown=%p\r\n",
+                    (void*)vtable, FnIsMouseDown);
+                log::to_file(buf);
+            }
         }
     }
 
@@ -154,9 +166,11 @@ bool offsets::Init()
         }
     }
 
-    fmt::snprintf(buf, sizeof(buf), "[offsets] GameDispatchVTable: %p  RouteGameMessage: %p\r\n",
-        (void*)GameDispatchVTable, FnRouteGameMessage);
-    log::to_file(buf);
+    if (g_debugLog) {
+        fmt::snprintf(buf, sizeof(buf), "[offsets] GameDispatchVTable: %p  RouteGameMessage: %p\r\n",
+            (void*)GameDispatchVTable, FnRouteGameMessage);
+        log::to_file(buf);
+    }
 
     // ── 7. PlayerSide vtable (vtable[0xD]) ──────────────────────────
     void* psMatch = game::pattern_scan(GameBase, GameSize,
@@ -172,9 +186,11 @@ bool offsets::Init()
         }
     }
 
-    fmt::snprintf(buf, sizeof(buf), "[offsets] PlayerSideVTable: %p  FnPlayerSide: %p\r\n",
-        (void*)PlayerSideVTable, FnPlayerSide);
-    log::to_file(buf);
+    if (g_debugLog) {
+        fmt::snprintf(buf, sizeof(buf), "[offsets] PlayerSideVTable: %p  FnPlayerSide: %p\r\n",
+            (void*)PlayerSideVTable, FnPlayerSide);
+        log::to_file(buf);
+    }
 
     return true;
 }

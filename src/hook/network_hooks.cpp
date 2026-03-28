@@ -31,7 +31,7 @@ namespace
             else
                 toast::Show(toast::Type::Info, "Player is Home");
 
-            log::to_file(a3 ? "[PlayerSide] Away\r\n" : "[PlayerSide] Home\r\n");
+            log::debug(a3 ? "[PlayerSide] Away\r\n" : "[PlayerSide] Home\r\n");
         }
         return g_originalPlayerSide(a1, a2, a3);
     }
@@ -66,7 +66,7 @@ namespace
         // Large buffer crash (opcode 0x6392FF71)
         if (op2 == 0x6392FF71 && a5 > 256) {
             toast::Show(toast::Type::Warning, "Blocked crash from opponent");
-            log::to_file("[PROTECT] Blocked crash 0x6392FF71 (large buf)\r\n");
+            log::debug("[PROTECT] Blocked crash 0x6392FF71 (large buf)\r\n");
             ((ept::register_context_t*)ctx)->rax = 0;
             return 1;
         }
@@ -75,7 +75,7 @@ namespace
         if (op2 == 0x2D1FDF90 || op2 == 0x9B142841 || op2 == 0x75879024 ||
             op2 == 0xF313C005 || op2 == 0x399143E7) {
             toast::Show(toast::Type::Warning, "Blocked crash from opponent");
-            log::to_file("[PROTECT] Blocked crash opcode\r\n");
+            log::debug("[PROTECT] Blocked crash opcode\r\n");
             ((ept::register_context_t*)ctx)->rax = 0;
             return 1;
         }
@@ -83,7 +83,7 @@ namespace
         // 0x5D4D4E4C with large buffer
         if (op2 == 0x5D4D4E4C && a5 > 64 && a4 != 0) {
             toast::Show(toast::Type::Warning, "Blocked crash from opponent");
-            log::to_file("[PROTECT] Blocked crash 0x5D4D4E4C\r\n");
+            log::debug("[PROTECT] Blocked crash 0x5D4D4E4C\r\n");
             ((ept::register_context_t*)ctx)->rax = 0;
             return 1;
         }
@@ -93,7 +93,7 @@ namespace
             op3 == 0xF501C37E || op3 == 0x5CB533F5 ||
             op3 == 0x2480F3C1 || op3 == 0xF30B99EF) {
             toast::Show(toast::Type::Warning, "Blocked crash from opponent");
-            log::to_file("[PROTECT] Blocked crash combo\r\n");
+            log::debug("[PROTECT] Blocked crash combo\r\n");
             ((ept::register_context_t*)ctx)->rax = 0;
             return 1;
         }
@@ -101,7 +101,7 @@ namespace
         // 0x82E9A020 duplicate with a4 > 1
         if (a4 && op2 == 0x82E9A020 && op3 == 0x82E9A020 && (unsigned int)*a4 > 1) {
             toast::Show(toast::Type::Warning, "Blocked crash from opponent");
-            log::to_file("[PROTECT] Blocked crash 0x82E9A020\r\n");
+            log::debug("[PROTECT] Blocked crash 0x82E9A020\r\n");
             ((ept::register_context_t*)ctx)->rax = 0;
             return 1;
         }
@@ -109,7 +109,7 @@ namespace
         // a5 == 0x96 crash
         if (a5 == 0x96) {
             toast::Show(toast::Type::Warning, "Blocked crash from opponent");
-            log::to_file("[PROTECT] Blocked crash a5==0x96\r\n");
+            log::debug("[PROTECT] Blocked crash a5==0x96\r\n");
             ((ept::register_context_t*)ctx)->rax = 0;
             return 1;
         }
@@ -118,7 +118,7 @@ namespace
         if (a4 && *a4 == (int)0xFFFFFFFF &&
             (op3 == 0x76A8609D || op3 == 0xFEBDCA3D || op3 == 0x8904984F)) {
             toast::Show(toast::Type::Warning, "Blocked crash from opponent");
-            log::to_file("[PROTECT] Blocked crash (a4=FFFFFFFF)\r\n");
+            log::debug("[PROTECT] Blocked crash (a4=FFFFFFFF)\r\n");
             ((ept::register_context_t*)ctx)->rax = 0;
             return 1;
         }
@@ -128,7 +128,7 @@ namespace
         // 0x9774D53D (high confidence freeze)
         if (op2 == 0x9774D53D || op3 == 0x9774D53D) {
             toast::Show(toast::Type::Error, "Blocked freeze from opponent");
-            log::to_file("[PROTECT] Blocked freeze 0x9774D53D\r\n");
+            log::debug("[PROTECT] Blocked freeze 0x9774D53D\r\n");
             ((ept::register_context_t*)ctx)->rax = 0;
             return 1;
         }
@@ -136,7 +136,7 @@ namespace
         // 0x406CE419 (pause_op_game freeze)
         if (op2 == 0x406CE419 || op3 == 0x406CE419) {
             toast::Show(toast::Type::Error, "Blocked freeze from opponent");
-            log::to_file("[PROTECT] Blocked freeze 0x406CE419\r\n");
+            log::debug("[PROTECT] Blocked freeze 0x406CE419\r\n");
             ((ept::register_context_t*)ctx)->rax = 0;
             return 1;
         }
@@ -144,7 +144,7 @@ namespace
         // 0xA477B52B (Freeze 2)
         if (op2 == 0xA477B52B || op3 == 0xA477B52B) {
             toast::Show(toast::Type::Error, "Blocked freeze from opponent");
-            log::to_file("[PROTECT] Blocked freeze 0xA477B52B\r\n");
+            log::debug("[PROTECT] Blocked freeze 0xA477B52B\r\n");
             ((ept::register_context_t*)ctx)->rax = 0;
             return 1;
         }
@@ -153,7 +153,7 @@ namespace
         if ((op2 == 0xE0A38D91 || op3 == 0xE0A38D91) &&
             a5 == 1 && a6 == -1 && a4 && *reinterpret_cast<unsigned char*>(a4) == 0xFF) {
             toast::Show(toast::Type::Error, "Blocked freeze from opponent");
-            log::to_file("[PROTECT] Blocked freeze 0xE0A38D91\r\n");
+            log::debug("[PROTECT] Blocked freeze 0xE0A38D91\r\n");
             ((ept::register_context_t*)ctx)->rax = 0;
             return 1;
         }
@@ -169,11 +169,11 @@ void hook::install_network_hooks()
         ept::install_hook(g_netHookParams,
             (unsigned char*)offsets::FnRouteGameMessage,
             (void*)&HookedRouteGameMessage, "RouteGameMessage");
-        log::to_file("[Ring-1] RouteGameMessage hooked (crash/freeze protection)\r\n");
+        log::debug("[ZeroHook] RouteGameMessage hooked (crash/freeze protection)\r\n");
     }
     else
     {
-        log::to_file("[Ring-1] WARNING: RouteGameMessage not found, protection disabled\r\n");
+        log::debug("[ZeroHook] WARNING: RouteGameMessage not found, protection disabled\r\n");
     }
 }
 
@@ -184,7 +184,7 @@ void hook::install_playerside_hook()
     // original — invisible to integrity checks. Uses CMD_EPT_PATCH_BYTES.
     if (!offsets::FnPlayerSide)
     {
-        log::to_file("[Ring-1] WARNING: PlayerSide not found\r\n");
+        log::debug("[ZeroHook] WARNING: PlayerSide not found\r\n");
         return;
     }
 
@@ -228,13 +228,13 @@ void hook::install_playerside_hook()
 
     if (!patchE9 || !originalTarget)
     {
-        log::to_file("[Ring-1] WARNING: PlayerSide thunk chain not resolved\r\n");
+        log::debug("[ZeroHook] WARNING: PlayerSide thunk chain not resolved\r\n");
         return;
     }
 
-    fmt::snprintf(buf, sizeof(buf), "[Ring-1] PlayerSide patchE9=%p originalTarget=%p\r\n",
+    fmt::snprintf(buf, sizeof(buf), "[ZeroHook] PlayerSide patchE9=%p originalTarget=%p\r\n",
         patchE9, (void*)originalTarget);
-    log::to_file(buf);
+    log::debug(buf);
 
     // Find a code cave (14+ CC bytes) within ±256KB of the thunk
     unsigned char* gameBase = (unsigned char*)offsets::GameBase;
@@ -270,9 +270,9 @@ void hook::install_playerside_hook()
     if (!cave)
     {
         fmt::snprintf(buf, sizeof(buf),
-            "[Ring-1] WARNING: No code cave found for PlayerSide (searched %p-%p, %llu bytes)\r\n",
+            "[ZeroHook] WARNING: No code cave found for PlayerSide (searched %p-%p, %llu bytes)\r\n",
             searchLo, searchHi, (unsigned long long)(searchHi - searchLo));
-        log::to_file(buf);
+        log::debug(buf);
         return;
     }
 
@@ -280,13 +280,13 @@ void hook::install_playerside_hook()
     intptr_t caveDist = (intptr_t)cave - (intptr_t)(patchE9 + 5);
     if (caveDist > 0x7FFFFFFFL || caveDist < -(intptr_t)0x7FFFFFFFL)
     {
-        log::to_file("[Ring-1] WARNING: Cave too far for rel32\r\n");
+        log::debug("[ZeroHook] WARNING: Cave too far for rel32\r\n");
         return;
     }
 
-    fmt::snprintf(buf, sizeof(buf), "[Ring-1] PlayerSide cave=%p dist=%lld\r\n",
+    fmt::snprintf(buf, sizeof(buf), "[ZeroHook] PlayerSide cave=%p dist=%lld\r\n",
         cave, (long long)caveDist);
-    log::to_file(buf);
+    log::debug(buf);
 
     // Build 12-byte trampoline: mov rax, <hook>; jmp rax
     // 48 B8 [imm64]  = mov rax, imm64 (10 bytes)
@@ -315,12 +315,12 @@ void hook::install_playerside_hook()
 
     if (req.status != 0 || req.result != 1)
     {
-        fmt::snprintf(buf, sizeof(buf), "[Ring-1] WARNING: EPT patch cave failed (status=%u result=%llu)\r\n",
+        fmt::snprintf(buf, sizeof(buf), "[ZeroHook] WARNING: EPT patch cave failed (status=%u result=%llu)\r\n",
             req.status, req.result);
-        log::to_file(buf);
+        log::debug(buf);
         return;
     }
-    log::to_file("[Ring-1] PlayerSide cave trampoline EPT-patched\r\n");
+    log::debug("[ZeroHook] PlayerSide cave trampoline EPT-patched\r\n");
 
     // EPT patch the thunk page: redirect E9 displacement to cave
     int newRel = (int)((long long)cave - (long long)(patchE9 + 5));
@@ -340,12 +340,12 @@ void hook::install_playerside_hook()
     if (req.status == 0 && req.result == 1)
     {
         g_originalPlayerSide = (PlayerSideFn_t)originalTarget;
-        log::to_file("[Ring-1] PlayerSide EPT hook installed (thunk + cave patched)\r\n");
+        log::debug("[ZeroHook] PlayerSide EPT hook installed (thunk + cave patched)\r\n");
     }
     else
     {
-        fmt::snprintf(buf, sizeof(buf), "[Ring-1] WARNING: EPT patch thunk failed (status=%u result=%llu)\r\n",
+        fmt::snprintf(buf, sizeof(buf), "[ZeroHook] WARNING: EPT patch thunk failed (status=%u result=%llu)\r\n",
             req.status, req.result);
-        log::to_file(buf);
+        log::debug(buf);
     }
 }

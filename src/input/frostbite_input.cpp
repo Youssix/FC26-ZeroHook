@@ -16,7 +16,7 @@ bool FrostbiteInput::Init()
     // All vtable pointers already resolved by offsets::Init()
     if (!offsets::InputReader || !offsets::FnIsKeyDown)
     {
-        log::to_file("[FBInput] InputReader vtable not resolved\r\n");
+        log::debug("[FBInput] InputReader vtable not resolved\r\n");
         return false;
     }
 
@@ -38,9 +38,9 @@ bool FrostbiteInput::Init()
     char buf[256];
     fmt::snprintf(buf, sizeof(buf), "[FBInput] reader=%p  isMouseDown=%p\r\n",
         (void*)s_reader, (void*)s_fnIsMouseDown);
-    log::to_file(buf);
+    log::debug(buf);
 
     s_ready = true;
-    log::to_file("[FBInput] Init OK (EPT hooks handle input blocking)\r\n");
+    log::debug("[FBInput] Init OK (EPT hooks handle input blocking)\r\n");
     return true;
 }
