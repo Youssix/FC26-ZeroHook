@@ -11,12 +11,14 @@ namespace rage
     // Initialize rage offsets — call after offsets::GameBase is set
     bool InitOffsets(void* gameBase, unsigned long gameSize);
 
+    // Kick (available in all builds)
+    void kick_opponent(int dcReason);
+
     // Rage actions (Premium only)
 #ifndef STANDARD_BUILD
     void crash_opps();
     void pause_op_game();       // Freeze 1 (PC/XBOX)
     void pause_op_game_new();   // Freeze 2
     void slider_bomb();
-    void kick_opponent(int dcReason);
 #endif
 }

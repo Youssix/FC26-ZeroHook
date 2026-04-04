@@ -65,6 +65,9 @@ namespace
         g_difficulties[3]="Professional"; g_difficulties[4]="World Class"; g_difficulties[5]="Legendary"; g_difficulties[6]="Ultimate";
     }
 
+    // Kick reason (shared between menu button and hotkey — available in all builds)
+    int  g_dcReason = 0;
+
 #ifndef STANDARD_BUILD
     // Rage hotkeys (default binds)
     int  hk_crash    = VK_F1;
@@ -79,9 +82,6 @@ namespace
     bool hk_bind_freeze2 = false;
     bool hk_bind_slider  = false;
     bool hk_bind_kick    = false;
-
-    // Kick reason (shared between menu button and hotkey)
-    int  g_dcReason = 0;
 
     // Hotkey action wrappers
     void hk_do_crash()   { rage::crash_opps(); }
@@ -303,6 +303,15 @@ void overlay::Frame(float screenW, float screenH)
                     CustomMenu::g_menu.Label("Enable before leaving match", CustomMenu::Colors::Warning);
                 CustomMenu::g_menu.EndSection();
             }
+
+            // ── Kick Opponent (available for all builds) ──
+            if (CustomMenu::g_menu.BeginSection("Disconnect"))
+            {
+                CustomMenu::g_menu.Combo("Reason", &g_dcReason, g_reasons, 14);
+                if (CustomMenu::g_menu.ButtonColored("Kick Opponent", CustomMenu::Colors::Secondary, -1, 28))
+                    rage::kick_opponent(g_dcReason);
+                CustomMenu::g_menu.EndSection();
+            }
         }
 
         // ===================== TAB 1: FUT =====================
@@ -377,7 +386,7 @@ void overlay::Frame(float screenW, float screenH)
                             CustomMenu::g_menu.SliderInt("Spoofed Losses", &champions::spoofedLosses, 0, 15,
                                 "Number of losses to spoof (0-15)");
 #else
-                            CustomMenu::g_menu.Label("Easy matchmaking active", CustomMenu::Colors::Success);
+                            CustomMenu::g_menu.Label("1W - 5L Fixed", CustomMenu::Colors::TextDisabled);
 #endif
                         }
                     }

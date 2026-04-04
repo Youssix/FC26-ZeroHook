@@ -200,7 +200,9 @@ void rage::slider_bomb()
     log::debug("[RAGE] slider_bomb sent\r\n");
 }
 
-// ── kick_opponent ───────────────────────────────────────────────────
+#endif // !STANDARD_BUILD
+
+// ── kick_opponent (available in all builds) ─────────────────────────
 void rage::kick_opponent(int dcReason)
 {
     if (!slider_ptr) {
@@ -235,4 +237,3 @@ void rage::kick_opponent(int dcReason)
     fmt::snprintf(buf, sizeof(buf), "[RAGE] kick_opponent sent (reason=%d)\r\n", dcReason);
     log::debug(buf);
 }
-#endif // !STANDARD_BUILD
