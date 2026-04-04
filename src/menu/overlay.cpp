@@ -229,13 +229,14 @@ void overlay::Frame(float screenW, float screenH)
         CustomMenu::g_menu.BeginTabs();
         CustomMenu::g_menu.Tab("General",       0);
         CustomMenu::g_menu.Tab("FUT",           1);
-        CustomMenu::g_menu.Tab("Sliders",       2);
 #ifndef STANDARD_BUILD
+        CustomMenu::g_menu.Tab("Sliders",       2);
         CustomMenu::g_menu.Tab("Rage",          3);
 #else
-        CustomMenu::g_menu.TabDisabled("Rage",  3);
+        CustomMenu::g_menu.TabDisabled("Sliders", 2);
+        CustomMenu::g_menu.TabDisabled("Rage",    3);
 #endif
-        CustomMenu::g_menu.Tab("AI",              4);
+        CustomMenu::g_menu.Tab("AI",            4);
         CustomMenu::g_menu.Tab("Squad Battles",  5);
         CustomMenu::g_menu.Tab("Pro Club",       6);
         CustomMenu::g_menu.Tab("Misc",           7);
@@ -424,7 +425,8 @@ void overlay::Frame(float screenW, float screenH)
             }
         }
 
-        // ===================== TAB 2: Sliders =====================
+#ifndef STANDARD_BUILD
+        // ===================== TAB 2: Sliders (Premium only) =====================
         else if (tab == 2)
         {
             // ── Section 1: Quick Actions ──
@@ -603,7 +605,6 @@ void overlay::Frame(float screenW, float screenH)
         }
 
         // ===================== TAB 3: Rage (Premium only) =====================
-#ifndef STANDARD_BUILD
         else if (tab == 3)
         {
             if (CustomMenu::g_menu.BeginSection("Opponent Control"))
@@ -740,6 +741,7 @@ void overlay::Frame(float screenW, float screenH)
         // ===================== TAB 4: AI =====================
         else if (tab == 4)
         {
+#ifndef STANDARD_BUILD
             if (CustomMenu::g_menu.BeginSection("AI Control"))
             {
                 CustomMenu::g_menu.Toggle("AI vs Opponents", &g_aiVsOpps,
@@ -748,10 +750,20 @@ void overlay::Frame(float screenW, float screenH)
                     "Remove AI control from opponent team");
                 CustomMenu::g_menu.EndSection();
             }
+#endif
 
             if (CustomMenu::g_menu.BeginSection("AI Difficulty"))
             {
-                CustomMenu::g_menu.Label("Requires hooks -- not yet active", CustomMenu::Colors::Warning);
+                static bool aiLocalLegendary = false;
+                static bool aiOpponentBeginner = false;
+#ifndef STANDARD_BUILD
+                CustomMenu::g_menu.Toggle("AI Local Legendary", &aiLocalLegendary);
+                CustomMenu::g_menu.Toggle("AI Opponent Beginner", &aiOpponentBeginner);
+#else
+                CustomMenu::g_menu.Label("AI Local Legendary", CustomMenu::Colors::TextDisabled);
+                CustomMenu::g_menu.Label("AI Opponent Beginner", CustomMenu::Colors::TextDisabled);
+                CustomMenu::g_menu.Label("Premium feature", CustomMenu::Colors::Warning);
+#endif
                 CustomMenu::g_menu.EndSection();
             }
         }
