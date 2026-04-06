@@ -12,6 +12,7 @@
 #include "../features/server.h"
 #include "../features/division.h"
 #include "../features/champions.h"
+#include "../features/proclub.h"
 #include "../log/fmt.h"
 #include "../log/log.h"
 #include "../renderer/renderer.h"
@@ -107,7 +108,8 @@ namespace
     }
 #endif
 
-    // ── Hotkeys for both builds ──
+#ifndef STANDARD_BUILD
+    // ── Slider hotkeys (premium only) ──
     int  hk_applySliders = VK_F5;
     int  hk_swapSettings = VK_F7;
     bool hk_bind_applySliders = false;
@@ -116,18 +118,19 @@ namespace
     void hk_do_applySliders() { sliders::ApplySliders(); }
     void hk_do_swapSettings() { sliders::SwapSettings(); }
 
-    void RegisterCommonHotkeys()
+    void RegisterSliderHotkeys()
     {
         menu::RegisterHotkey(hk_applySliders, hk_do_applySliders);
         menu::RegisterHotkey(hk_swapSettings, hk_do_swapSettings);
     }
 
-    void RebindCommonHotkey(int& hkVar, int newKey, void(*action)())
+    void RebindSliderHotkey(int& hkVar, int newKey, void(*action)())
     {
         menu::UnregisterHotkey(hkVar);
         hkVar = newKey;
         menu::RegisterHotkey(newKey, action);
     }
+#endif
 
     LARGE_INTEGER  g_freq        = {};
 
@@ -158,20 +161,23 @@ void overlay::Init(D3D12Renderer* renderer)
         // Scan rage + slider offsets (pattern scan needs game module)
         if (offsets::GameBase && offsets::GameSize)
         {
+#ifndef STANDARD_BUILD
             g_rageReady = rage::InitOffsets(offsets::GameBase, offsets::GameSize);
             sliders::InitOffsets(offsets::GameBase, offsets::GameSize);
+#endif
             // competitive::Init(offsets::GameBase, offsets::GameSize);  // WIP
             // dda::Init(offsets::GameBase, offsets::GameSize);          // WIP
             server::Init(offsets::GameBase, offsets::GameSize);
             champions::Init(offsets::GameBase, offsets::GameSize);
             division::Init(offsets::GameBase, offsets::GameSize);
+            proclub::Init(offsets::GameBase, offsets::GameSize);
         }
 
         QueryPerformanceFrequency(&g_freq);
         QueryPerformanceCounter(&g_lastTime);
 
-        RegisterCommonHotkeys();
 #ifndef STANDARD_BUILD
+        RegisterSliderHotkeys();
         if (g_rageReady)
             RegisterRageHotkeys();
 #endif
@@ -447,7 +453,7 @@ void overlay::Frame(float screenW, float screenH)
                     CustomMenu::g_menu.Label("Press key...", CustomMenu::Colors::Warning);
                     int nk = hk_applySliders;
                     if (menu::BindHotkeyPoll(nk, hk_bind_applySliders))
-                        RebindCommonHotkey(hk_applySliders, nk, hk_do_applySliders);
+                        RebindSliderHotkey(hk_applySliders, nk, hk_do_applySliders);
                 } else {
                     float btnW = 110;
                     if (CustomMenu::g_menu.ButtonColored("Apply Sliders V2", CustomMenu::Colors::Success, btnW, 28))
@@ -466,7 +472,7 @@ void overlay::Frame(float screenW, float screenH)
                     CustomMenu::g_menu.Label("Press key...", CustomMenu::Colors::Warning);
                     int nk = hk_swapSettings;
                     if (menu::BindHotkeyPoll(nk, hk_bind_swapSettings))
-                        RebindCommonHotkey(hk_swapSettings, nk, hk_do_swapSettings);
+                        RebindSliderHotkey(hk_swapSettings, nk, hk_do_swapSettings);
                 } else {
                     float btnW = 110;
                     if (CustomMenu::g_menu.ButtonColored("Swap Settings", CustomMenu::Colors::Warning, btnW, 28))
@@ -810,21 +816,29 @@ void overlay::Frame(float screenW, float screenH)
         {
             if (CustomMenu::g_menu.BeginSection("Pro Club Features"))
             {
+                if (proclub::g_xpReady)
+                    CustomMenu::g_menu.Toggle("XP Boost (10x)", &proclub::g_xpBoost,
+                        "Multiplies match XP by 10");
+                else
+                    CustomMenu::g_menu.Label("XP Boost — pattern not found", CustomMenu::Colors::TextDisabled);
+
+                if (proclub::g_skillsReady)
+                    CustomMenu::g_menu.Toggle("Skills 99", &proclub::g_skills99,
+                        "Sets all Pro Club skills to 99");
+                else
+                    CustomMenu::g_menu.Label("Skills 99 — pattern not found", CustomMenu::Colors::TextDisabled);
+
                 static bool unlockAll = false;
-                static bool xpBoost = false;
-                static bool skills99 = false;
                 static bool botFiveStars = false;
                 static bool aiAutoPlay = false;
                 static bool proFreeFacilities = false;
                 static bool proSearchAlone = false;
                 CustomMenu::g_menu.Toggle("Unlock All", &unlockAll);
-                CustomMenu::g_menu.Toggle("XP Boost", &xpBoost);
-                CustomMenu::g_menu.Toggle("Skills 99", &skills99);
                 CustomMenu::g_menu.Toggle("Bot 5 Stars", &botFiveStars);
                 CustomMenu::g_menu.Toggle("AI Auto Play", &aiAutoPlay);
                 CustomMenu::g_menu.Toggle("Free Facilities", &proFreeFacilities);
                 CustomMenu::g_menu.Toggle("Search Game Alone", &proSearchAlone);
-                CustomMenu::g_menu.Label("Pro Club hooks not yet active", CustomMenu::Colors::Warning);
+                CustomMenu::g_menu.Label("Other hooks not yet active", CustomMenu::Colors::Warning);
                 CustomMenu::g_menu.EndSection();
             }
 
