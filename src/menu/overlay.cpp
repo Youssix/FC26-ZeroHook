@@ -828,17 +828,20 @@ void overlay::Frame(float screenW, float screenH)
                 else
                     CustomMenu::g_menu.Label("Skills 99 — pattern not found", CustomMenu::Colors::TextDisabled);
 
+                if (proclub::g_searchAloneReady)
+                    CustomMenu::g_menu.Toggle("Search Game Alone", &proclub::g_searchAlone,
+                        "Patch JNZ->JZ to allow solo matchmaking");
+                else
+                    CustomMenu::g_menu.Label("Search Alone — pattern not found", CustomMenu::Colors::TextDisabled);
+
                 static bool unlockAll = false;
                 static bool botFiveStars = false;
                 static bool aiAutoPlay = false;
                 static bool proFreeFacilities = false;
-                static bool proSearchAlone = false;
                 CustomMenu::g_menu.Toggle("Unlock All", &unlockAll);
                 CustomMenu::g_menu.Toggle("Bot 5 Stars", &botFiveStars);
                 CustomMenu::g_menu.Toggle("AI Auto Play", &aiAutoPlay);
                 CustomMenu::g_menu.Toggle("Free Facilities", &proFreeFacilities);
-                CustomMenu::g_menu.Toggle("Search Game Alone", &proSearchAlone);
-                CustomMenu::g_menu.Label("Other hooks not yet active", CustomMenu::Colors::Warning);
                 CustomMenu::g_menu.EndSection();
             }
 
@@ -1035,6 +1038,9 @@ void overlay::Frame(float screenW, float screenH)
     }
 
     CustomMenu::g_menu.EndFrame();
+
+    // ── Pro Club per-frame (SearchAlone toggle) ──
+    proclub::Update();
 
     // ── Per-frame features (run even when menu is closed) ──
     if (g_rageReady && rage::slider_ptr)

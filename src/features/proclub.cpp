@@ -13,10 +13,12 @@
 
 namespace proclub
 {
-    bool g_xpBoost    = false;
-    bool g_skills99   = false;
-    bool g_xpReady    = false;
-    bool g_skillsReady = false;
+    bool g_xpBoost      = false;
+    bool g_skills99     = false;
+    bool g_searchAlone  = false;
+    bool g_xpReady      = false;
+    bool g_skillsReady  = false;
+    bool g_searchAloneReady = false;
 }
 
 namespace
@@ -344,6 +346,13 @@ namespace
         log::debug("[PROCLUB] Skills 99 EPT hook installed\r\n");
         return true;
     }
+
+    // ── Search Game Alone ───────────────────────────────────────────
+    //
+    // Single byte patch: JNZ (0x75) → JZ (0x74) at pattern match.
+    // No cave needed — just EPT-patch the one byte on toggle change.
+
+    uintptr_t g_searchAloneAddr = 0;
 }
 
 // ── Public Init ─────────────────────────────────────────────────────
@@ -386,6 +395,21 @@ bool proclub::Init(void* gameBase, unsigned long gameSize)
             log::debug("[PROCLUB] ERROR: Skills 99 pattern not found\r\n");
     }
 
+    // ── Search Game Alone ────────────────────────────────────────────
+    {
+        void* m = game::pattern_scan(gameBase, gameSize,
+            "75 ? 83 FF ? 73 ? 48 8D 8B ? ? ? ? 0F BE 41");
+        if (m)
+        {
+            g_searchAloneAddr = (uintptr_t)m;
+            g_searchAloneReady = true;
+            fmt::snprintf(buf, sizeof(buf), "[PROCLUB] SearchAlone: %p\r\n", m);
+            log::debug(buf);
+        }
+        else
+            log::debug("[PROCLUB] ERROR: SearchAlone pattern not found\r\n");
+    }
+
     // ── Install EPT hooks ───────────────────────────────────────────
     if (xpHook)
         g_xpReady = InstallXpBoost(xpHook, base, end);
@@ -394,9 +418,30 @@ bool proclub::Init(void* gameBase, unsigned long gameSize)
         g_skillsReady = InstallSkills99(skillsHook, base, end);
 
     fmt::snprintf(buf, sizeof(buf),
-        "[PROCLUB] Init done — XP:%s Skills99:%s\r\n",
-        g_xpReady ? "OK" : "FAIL", g_skillsReady ? "OK" : "FAIL");
+        "[PROCLUB] Init done — XP:%s Skills99:%s SearchAlone:%s\r\n",
+        g_xpReady ? "OK" : "FAIL",
+        g_skillsReady ? "OK" : "FAIL",
+        g_searchAloneReady ? "OK" : "FAIL");
     log::debug(buf);
 
-    return g_xpReady || g_skillsReady;
+    return g_xpReady || g_skillsReady || g_searchAloneReady;
+}
+
+// ── Per-frame Update ────────────────────────────────────────────────
+
+void proclub::Update()
+{
+    // SearchAlone: EPT-patch single byte only when toggle state changes
+    static bool prevSearchAlone = false;
+    if (g_searchAloneReady && g_searchAlone != prevSearchAlone)
+    {
+        unsigned char byte = g_searchAlone ? 0x74 : 0x75;  // JZ : JNZ
+        EptPatch(g_searchAloneAddr, &byte, 1);
+        prevSearchAlone = g_searchAlone;
+
+        char buf[96];
+        fmt::snprintf(buf, sizeof(buf), "[PROCLUB] SearchAlone %s (0x%02X)\r\n",
+            g_searchAlone ? "ON" : "OFF", byte);
+        log::debug(buf);
+    }
 }
