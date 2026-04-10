@@ -134,7 +134,7 @@
     <ClCompile Include="src\features\server.cpp" />
     <ClCompile Include="src\features\division.cpp" />
     <ClCompile Include="src\features\champions.cpp" />
-    <ClCompile Include="src\features\proclub.cpp" />
+    <ClCompile Include="src\features\opponent_info.cpp" />
   </ItemGroup>
   <!-- ====== Header Files ====== -->
   <ItemGroup>
@@ -146,7 +146,7 @@
     <ClInclude Include="src\features\division.h" />
     <ClInclude Include="src\features\rage.h" />
     <ClInclude Include="src\features\server.h" />
-    <ClInclude Include="src\features\proclub.h" />
+    <ClInclude Include="src\features\opponent_info.h" />
     <ClInclude Include="src\features\sliders.h" />
     <ClInclude Include="src\game\game.h" />
     <ClInclude Include="src\hook\dxgi_hooks.h" />

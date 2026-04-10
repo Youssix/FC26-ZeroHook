@@ -4,6 +4,7 @@
 #include "hook/dxgi_hooks.h"
 #include "hook/network_hooks.h"
 #include "offsets/offsets.h"
+#include "bridge/bridge.h"
 
 #pragma comment(lib, "kernel32.lib")
 
@@ -15,7 +16,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
     {
         log::to_file("[ZeroHook] FC26-ZeroHook injected\r\n");
 
-        // Resolve all offsets first (game module, spoof gadget, swapchain, input reader)
         if (!offsets::Init())
         {
             log::debug("[ZeroHook] ABORT: offsets::Init() failed\r\n");
@@ -31,6 +31,8 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
         hook::install_dxgi_hooks();
         hook::install_network_hooks();
         hook::install_playerside_hook();
+
+        bridge::init("FC26");
     }
 
     return TRUE;

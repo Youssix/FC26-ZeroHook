@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "zerohook-bridge": {
+      "command": "python",
+      "args": ["mcp/server.py"],
+      "cwd": "E:/DUMP/FC26/FC26-ZeroHook"
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "zerohook-bridge": {
+      "command": "python",
+      "args": ["E:/DUMP/FC26/FC26-ZeroHook/mcp/server.py"]
+    },
+    "cheatengine": {
+      "command": "python",
+      "args": ["E:/DUMP/FC26/FC26-ZeroHook/cheatengine-mcp-bridge-main/MCP_Server/mcp_cheatengine.py"]
+    }
+  }
+}

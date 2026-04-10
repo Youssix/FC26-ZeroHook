@@ -12,7 +12,7 @@
 #include "../features/server.h"
 #include "../features/division.h"
 #include "../features/champions.h"
-#include "../features/proclub.h"
+#include "../features/opponent_info.h"
 #include "../log/fmt.h"
 #include "../log/log.h"
 #include "../renderer/renderer.h"
@@ -110,7 +110,7 @@ namespace
 
 #ifndef STANDARD_BUILD
     // ── Slider hotkeys (premium only) ──
-    int  hk_applySliders = VK_F5;
+    int  hk_applySliders = VK_F4;
     int  hk_swapSettings = VK_F7;
     bool hk_bind_applySliders = false;
     bool hk_bind_swapSettings = false;
@@ -147,45 +147,81 @@ namespace
 
 void overlay::Init(D3D12Renderer* renderer)
 {
+    log::debug("[OVL-INIT] overlay::Init entered\r\n");
     g_rendererPtr = renderer;
-    InitComboLabels();  // populate string pointers via RIP-relative code
-    CustomMenu::g_menu.Init(renderer);
+
+    log::debug("[OVL-INIT] InitComboLabels...\r\n");
+    __try { InitComboLabels(); }
+    __except (1) { log::debug("[OVL-INIT] EXCEPTION in InitComboLabels\r\n"); return; }
+
+    log::debug("[OVL-INIT] CustomMenu::Init...\r\n");
+    __try { CustomMenu::g_menu.Init(renderer); }
+    __except (1) { log::debug("[OVL-INIT] EXCEPTION in CustomMenu::Init\r\n"); return; }
+
     CustomMenu::g_menu.SetOpen(true);
 
     // Only do one-time game init on first call — resizes only need renderer re-init
     static bool s_gameInitDone = false;
     if (!s_gameInitDone)
     {
-        FrostbiteInput::Init();
+        log::debug("[OVL-INIT] FrostbiteInput::Init...\r\n");
+        __try { FrostbiteInput::Init(); }
+        __except (1) { log::debug("[OVL-INIT] EXCEPTION in FrostbiteInput::Init\r\n"); }
 
         // Scan rage + slider offsets (pattern scan needs game module)
         if (offsets::GameBase && offsets::GameSize)
         {
+            log::debug("[OVL-INIT] rage::InitOffsets...\r\n");
+            __try { g_rageReady = rage::InitOffsets(offsets::GameBase, offsets::GameSize); }
+            __except (1) { log::debug("[OVL-INIT] EXCEPTION in rage::InitOffsets\r\n"); g_rageReady = false; }
+            log::debug(g_rageReady ? "[OVL-INIT] rage::InitOffsets OK\r\n" : "[OVL-INIT] rage::InitOffsets FAILED\r\n");
+
 #ifndef STANDARD_BUILD
-            g_rageReady = rage::InitOffsets(offsets::GameBase, offsets::GameSize);
-            sliders::InitOffsets(offsets::GameBase, offsets::GameSize);
+            log::debug("[OVL-INIT] sliders::InitOffsets...\r\n");
+            __try { sliders::InitOffsets(offsets::GameBase, offsets::GameSize); }
+            __except (1) { log::debug("[OVL-INIT] EXCEPTION in sliders::InitOffsets\r\n"); }
 #endif
-            // competitive::Init(offsets::GameBase, offsets::GameSize);  // WIP
-            // dda::Init(offsets::GameBase, offsets::GameSize);          // WIP
-            server::Init(offsets::GameBase, offsets::GameSize);
-            champions::Init(offsets::GameBase, offsets::GameSize);
-            division::Init(offsets::GameBase, offsets::GameSize);
-            proclub::Init(offsets::GameBase, offsets::GameSize);
+
+            log::debug("[OVL-INIT] server::Init...\r\n");
+            __try { server::Init(offsets::GameBase, offsets::GameSize); }
+            __except (1) { log::debug("[OVL-INIT] EXCEPTION in server::Init\r\n"); }
+
+            log::debug("[OVL-INIT] champions::Init...\r\n");
+            __try { champions::Init(offsets::GameBase, offsets::GameSize); }
+            __except (1) { log::debug("[OVL-INIT] EXCEPTION in champions::Init\r\n"); }
+
+            log::debug("[OVL-INIT] division::Init...\r\n");
+            __try { division::Init(offsets::GameBase, offsets::GameSize); }
+            __except (1) { log::debug("[OVL-INIT] EXCEPTION in division::Init\r\n"); }
+
+            log::debug("[OVL-INIT] opp_info::Init...\r\n");
+            __try { opp_info::Init(offsets::GameBase, offsets::GameSize); }
+            __except (1) { log::debug("[OVL-INIT] EXCEPTION in opp_info::Init\r\n"); }
+        } else {
+            log::debug("[OVL-INIT] SKIP feature inits — GameBase/GameSize are NULL\r\n");
         }
 
         QueryPerformanceFrequency(&g_freq);
         QueryPerformanceCounter(&g_lastTime);
 
 #ifndef STANDARD_BUILD
-        RegisterSliderHotkeys();
-        if (g_rageReady)
-            RegisterRageHotkeys();
+        log::debug("[OVL-INIT] RegisterSliderHotkeys...\r\n");
+        __try { RegisterSliderHotkeys(); }
+        __except (1) { log::debug("[OVL-INIT] EXCEPTION in RegisterSliderHotkeys\r\n"); }
+
+        if (g_rageReady) {
+            log::debug("[OVL-INIT] RegisterRageHotkeys...\r\n");
+            __try { RegisterRageHotkeys(); }
+            __except (1) { log::debug("[OVL-INIT] EXCEPTION in RegisterRageHotkeys\r\n"); }
+        }
 #endif
 
         s_gameInitDone = true;
+        log::debug("[OVL-INIT] === game init complete ===\r\n");
     }
 
     g_initialized = true;
+    log::debug("[OVL-INIT] overlay::Init complete\r\n");
 }
 
 bool overlay::IsInitialized()
@@ -197,10 +233,10 @@ void overlay::Frame(float screenW, float screenH)
 {
     static bool s_first = true;
 
-    if (s_first) log::to_file("[OVL] BlockInput(false)\r\n");
+    if (s_first) log::debug("[OVL] BlockInput(false)\r\n");
     FrostbiteInput::BlockGameInput(false);
 
-    if (s_first) log::to_file("[OVL] CheckHotkeys\r\n");
+    if (s_first) log::debug("[OVL] CheckHotkeys\r\n");
     menu::CheckHotkeys();
 
     // Menu toggle — manual edge detect (FC26 pattern)
@@ -214,22 +250,22 @@ void overlay::Frame(float screenW, float screenH)
         prevF5     = curF5;
     }
 
-    if (s_first) log::to_file("[OVL] GetMouse\r\n");
+    if (s_first) log::debug("[OVL] GetMouse\r\n");
     float mouseX   = (float)FrostbiteInput::GetMouseX();
     float mouseY   = (float)FrostbiteInput::GetMouseY();
     bool  mouseDown = FrostbiteInput::IsMouseButtonDown(0);
     float scroll   = (float)FrostbiteInput::GetMouseScroll();
 
-    if (s_first) log::to_file("[OVL] ReBlock\r\n");
+    if (s_first) log::debug("[OVL] ReBlock\r\n");
     FrostbiteInput::BlockGameInput(
         CustomMenu::g_menu.IsOpen() && CustomMenu::g_menu.WantsMouse());
 
-    if (s_first) log::to_file("[OVL] BeginFrame\r\n");
+    if (s_first) log::debug("[OVL] BeginFrame\r\n");
     CustomMenu::g_menu.SetScrollInput(scroll);
     CustomMenu::g_menu.BeginFrame(screenW, screenH, mouseX, mouseY, mouseDown, scroll);
 
-    if (s_first) log::to_file("[OVL] BeginWindow\r\n");
-    if (CustomMenu::g_menu.BeginWindow("Ring-1"))
+    if (s_first) log::debug("[OVL] BeginWindow\r\n");
+    if (CustomMenu::g_menu.BeginWindow("ZeroHook"))
     {
         // ── Sidebar tabs ──
         CustomMenu::g_menu.BeginTabs();
@@ -298,6 +334,24 @@ void overlay::Frame(float screenW, float screenH)
             //     }
             //     CustomMenu::g_menu.EndSection();
             // }
+
+            // ── Opponent Intel ──
+            if (CustomMenu::g_menu.BeginSection("Opponent Intel"))
+            {
+                if (!opp_info::IsReady())
+                    CustomMenu::g_menu.Label("Patterns not found", CustomMenu::Colors::Warning);
+                else if (!opp_info::IsHooked())
+                {
+                    if (CustomMenu::g_menu.ButtonColored("Install Hook##opp", CustomMenu::Colors::Primary, -1, 28))
+                        opp_info::InstallHook();
+                }
+                else
+                {
+                    CustomMenu::g_menu.StatusIndicator("Hook", true);
+                    CustomMenu::g_menu.Toggle("Show Opponent Window", &opp_info::g_showWindow);
+                }
+                CustomMenu::g_menu.EndSection();
+            }
 
             // ── Match Utilities ──
             if (CustomMenu::g_menu.BeginSection("Match Utilities"))
@@ -816,32 +870,20 @@ void overlay::Frame(float screenW, float screenH)
         {
             if (CustomMenu::g_menu.BeginSection("Pro Club Features"))
             {
-                if (proclub::g_xpReady)
-                    CustomMenu::g_menu.Toggle("XP Boost (10x)", &proclub::g_xpBoost,
-                        "Multiplies match XP by 10");
-                else
-                    CustomMenu::g_menu.Label("XP Boost — pattern not found", CustomMenu::Colors::TextDisabled);
-
-                if (proclub::g_skillsReady)
-                    CustomMenu::g_menu.Toggle("Skills 99", &proclub::g_skills99,
-                        "Sets all Pro Club skills to 99");
-                else
-                    CustomMenu::g_menu.Label("Skills 99 — pattern not found", CustomMenu::Colors::TextDisabled);
-
-                if (proclub::g_searchAloneReady)
-                    CustomMenu::g_menu.Toggle("Search Game Alone", &proclub::g_searchAlone,
-                        "Patch JNZ->JZ to allow solo matchmaking");
-                else
-                    CustomMenu::g_menu.Label("Search Alone — pattern not found", CustomMenu::Colors::TextDisabled);
-
                 static bool unlockAll = false;
+                static bool xpBoost = false;
+                static bool skills99 = false;
                 static bool botFiveStars = false;
                 static bool aiAutoPlay = false;
                 static bool proFreeFacilities = false;
+                static bool proSearchAlone = false;
                 CustomMenu::g_menu.Toggle("Unlock All", &unlockAll);
+                CustomMenu::g_menu.Toggle("XP Boost", &xpBoost);
+                CustomMenu::g_menu.Toggle("Skills 99", &skills99);
                 CustomMenu::g_menu.Toggle("Bot 5 Stars", &botFiveStars);
                 CustomMenu::g_menu.Toggle("AI Auto Play", &aiAutoPlay);
                 CustomMenu::g_menu.Toggle("Free Facilities", &proFreeFacilities);
+                CustomMenu::g_menu.Toggle("Search Game Alone", &proSearchAlone);
                 CustomMenu::g_menu.EndSection();
             }
 
@@ -1037,10 +1079,80 @@ void overlay::Frame(float screenW, float screenH)
         CustomMenu::g_menu.EndWindow();
     }
 
-    CustomMenu::g_menu.EndFrame();
+    // ── Opponent Info floating window (between EndWindow and EndFrame) ──
+    if (opp_info::IsHooked() && opp_info::g_showWindow)
+    {
+        if (CustomMenu::g_menu.BeginFloatingWindow("Opponent Intel",
+                screenW - 400, 20, 380, 460, &opp_info::g_showWindow))
+        {
+            if (!opp_info::g_opponent.valid)
+            {
+                CustomMenu::g_menu.Label("Waiting for match...", CustomMenu::Colors::TextSecondary);
+            }
+            else
+            {
+            char line[128];
 
-    // ── Pro Club per-frame (SearchAlone toggle) ──
-    proclub::Update();
+            CustomMenu::g_menu.LabelValue("Name", opp_info::g_opponent.name);
+            CustomMenu::g_menu.LabelValue("Platform", opp_info::g_opponent.platform);
+
+            if (opp_info::g_opponent.personaId) {
+                fmt::snprintf(line, sizeof(line), "%llu", opp_info::g_opponent.personaId);
+                CustomMenu::g_menu.LabelValue("Persona ID", line);
+            }
+
+            if (opp_info::g_opponent.drRating) {
+                fmt::snprintf(line, sizeof(line), "%d", opp_info::g_opponent.drRating);
+                CustomMenu::g_menu.LabelValue("DR Rating", line);
+            }
+            if (opp_info::g_opponent.chemistry) {
+                fmt::snprintf(line, sizeof(line), "%d/33", opp_info::g_opponent.chemistry);
+                CustomMenu::g_menu.LabelValue("Chemistry", line);
+            }
+            if (opp_info::g_opponent.teamOvr) {
+                fmt::snprintf(line, sizeof(line), "%d", opp_info::g_opponent.teamOvr);
+                CustomMenu::g_menu.LabelValue("Team OVR", line);
+            }
+            if (opp_info::g_opponent.skillRating) {
+                fmt::snprintf(line, sizeof(line), "%d", opp_info::g_opponent.skillRating);
+                CustomMenu::g_menu.LabelValue("Skill Rating", line);
+            }
+
+            fmt::snprintf(line, sizeof(line), "%dW %dL %dD",
+                opp_info::g_opponent.seasonWins,
+                opp_info::g_opponent.seasonLosses,
+                opp_info::g_opponent.seasonTies);
+            CustomMenu::g_menu.LabelValue("Record", line);
+
+            if (opp_info::g_opponent.dnfPercent) {
+                fmt::snprintf(line, sizeof(line), "%d%%", opp_info::g_opponent.dnfPercent);
+                CustomMenu::g_menu.LabelValue("DNF", line);
+            }
+
+            if (opp_info::g_opponent.creationYear > 0) {
+                static const char* months[] = {
+                    "?","Jan","Feb","Mar","Apr","May","Jun",
+                    "Jul","Aug","Sep","Oct","Nov","Dec"
+                };
+                int mi = opp_info::g_opponent.creationMonth;
+                if (mi < 0 || mi > 12) mi = 0;
+                fmt::snprintf(line, sizeof(line), "%s %u",
+                    months[mi], opp_info::g_opponent.creationYear);
+                CustomMenu::g_menu.LabelValue("Created", line);
+            }
+
+            if (opp_info::g_opponent.clubName[0]) {
+                fmt::snprintf(line, sizeof(line), "%s [%s]",
+                    opp_info::g_opponent.clubName, opp_info::g_opponent.clubTag);
+                CustomMenu::g_menu.LabelValue("Club", line);
+            }
+            } // end if (valid)
+
+            CustomMenu::g_menu.EndFloatingWindow();
+        }
+    }
+
+    CustomMenu::g_menu.EndFrame();
 
     // ── Per-frame features (run even when menu is closed) ──
     if (g_rageReady && rage::slider_ptr)
@@ -1088,8 +1200,8 @@ void overlay::Frame(float screenW, float screenH)
         if (now - lastAiSend > 3000) {
             lastAiSend = now;
             __try {
-                uintptr_t function_rcx = *(uintptr_t*)rage::msg_dispatcher;
-                if (function_rcx && rage::dispatch_vfunc) {
+                uintptr_t rcx = 0; rage::dispatch_fn_t fn = nullptr;
+                if (rage::get_dispatch(rcx, fn)) {
                     uint64_t opcode = 0xA2CB726E;
                     int ourSide = sliders::playerside;
 
@@ -1097,10 +1209,7 @@ void overlay::Frame(float screenW, float screenH)
                         unsigned int buffer[3] = { (unsigned int)ourSide, (unsigned int)i, 0 };
 
                         hook::g_allow_attack_send = true;
-                        typedef void(__fastcall* dispatch_fn_t)(
-                            uint64_t, uint64_t*, uint64_t*, void*, int, char, unsigned char);
-                        auto fn = reinterpret_cast<dispatch_fn_t>(rage::dispatch_vfunc);
-                        spoof_call(fn, (uint64_t)function_rcx,
+                        spoof_call(fn, (uint64_t)rcx,
                             (uint64_t*)&opcode, (uint64_t*)&opcode,
                             (void*)buffer, (int)12, (char)0xFF, (unsigned char)0);
                         hook::g_allow_attack_send = false;
@@ -1118,8 +1227,8 @@ void overlay::Frame(float screenW, float screenH)
         if (now2 - lastDisableAiSend > 3000) {
             lastDisableAiSend = now2;
             __try {
-                uintptr_t function_rcx = *(uintptr_t*)rage::msg_dispatcher;
-                if (function_rcx && rage::dispatch_vfunc) {
+                uintptr_t rcx = 0; rage::dispatch_fn_t fn = nullptr;
+                if (rage::get_dispatch(rcx, fn)) {
                     uint64_t opcode = 0xA2CB726E;
                     int oppSide = (sliders::playerside == 0) ? 1 : 0;
 
@@ -1127,10 +1236,7 @@ void overlay::Frame(float screenW, float screenH)
                         unsigned int buffer[3] = { (unsigned int)oppSide, (unsigned int)i, 0 };
 
                         hook::g_allow_attack_send = true;
-                        typedef void(__fastcall* dispatch_fn_t)(
-                            uint64_t, uint64_t*, uint64_t*, void*, int, char, unsigned char);
-                        auto fn = reinterpret_cast<dispatch_fn_t>(rage::dispatch_vfunc);
-                        spoof_call(fn, (uint64_t)function_rcx,
+                        spoof_call(fn, (uint64_t)rcx,
                             (uint64_t*)&opcode, (uint64_t*)&opcode,
                             (void*)buffer, (int)12, (char)0xFF, (unsigned char)0);
                         hook::g_allow_attack_send = false;
@@ -1150,5 +1256,5 @@ void overlay::Frame(float screenW, float screenH)
         toast::Render(*g_rendererPtr, screenW, screenH, dt);
     }
 
-    if (s_first) { log::to_file("[OVL] Done\r\n"); s_first = false; }
+    if (s_first) { log::debug("[OVL] Done\r\n"); s_first = false; }
 }

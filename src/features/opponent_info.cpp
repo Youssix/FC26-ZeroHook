@@ -1,0 +1,746 @@
+// opponent_info.cpp — Opponent Intel via EPT hook on matchmaking vtable
+// NoCRT-safe: no std:: anything. Uses CMD_INSTALL_EPT_HOOK via NtClose channel.
+
+#include "opponent_info.h"
+#include <intrin.h>
+#include <Windows.h>
+#include "../game/game.h"
+#include "../hook/ept_hook.h"
+#include "../comms/comms.h"
+#include "../offsets/offsets.h"
+#include "../menu/toast.h"
+#include "../log/log.h"
+#include "../log/fmt.h"
+#include "../spoof/spoof_call.hpp"
+
+// ── Globals ─────────────────────────────────────────────────────────
+
+namespace opp_info
+{
+    PlayerData g_opponent = {};
+    bool       g_showWindow = true;
+}
+
+namespace
+{
+    // ── Resolved offsets ────────────────────────────────────────────
+    uintptr_t g_vtableBase       = 0;   // OnlineMatchmakingPreMatchController vtbl
+    uintptr_t g_targetFunc       = 0;   // vtable[1] — hook target
+    uintptr_t g_func1            = 0;   // getOpponentFunc_1
+    uintptr_t g_func2            = 0;   // getOpponentFunc_2
+    uintptr_t g_func3            = 0;   // getOpponentFunc_3
+    uintptr_t g_seasonInfoFn     = 0;   // getSeasonInfo
+    uintptr_t g_testfuncMatch    = 0;   // testfunc_match (RIP-resolved pointer)
+    uint32_t  g_matchTypeMagic  = 0;   // dynamically extracted from "BA ? ? ? ?" (e.g. 0x1B5)
+    uint32_t  g_matchTypeVtOff  = 0;   // vtable offset from "FF 90 ? ? ? ?" (e.g. 0x1A0)
+
+    // IDK hook (creation date for all match types incl. FUT Champs)
+    uintptr_t g_idkVtable        = 0;   // idk_hook vtable base
+    uintptr_t g_idkTargetFunc    = 0;   // dynamically resolved vtable slot
+    uintptr_t g_idkFuncAddr      = 0;   // direct address of the IDK function
+    uint32_t  g_idkDataOffset    = 0;   // dynamic from prologue (e.g. 0xC410)
+    int       g_idkSlot          = -1;  // resolved vtable slot index
+    bool      g_idkHooked        = false;
+
+    bool g_initialized = false;
+    bool g_hooked      = false;
+
+    // EPT hook params (page-aligned for hypervisor)
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_hookParams = {};
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_idkHookParams = {};
+
+    // ── Helpers ─────────────────────────────────────────────────────
+
+    uintptr_t resolve_rip3_7(uintptr_t addr)
+    {
+        if (!addr) return 0;
+        int32_t disp = *(int32_t*)(addr + 3);
+        return addr + 7 + disp;
+    }
+
+    uintptr_t resolve_call_e8(uintptr_t addr)
+    {
+        if (!addr) return 0;
+        int32_t disp = *(int32_t*)(addr + 1);
+        return addr + 5 + disp;
+    }
+
+    // GetOppsInfo — follows E8 call, then reads RIP-relative at +4 inside target
+    uintptr_t resolve_opps_info(uintptr_t addr)
+    {
+        if (!addr) return 0;
+        // follow E8 call
+        uintptr_t sub = resolve_call_e8(addr);
+        if (!sub) return 0;
+        // at sub+4 there's a RIP-relative instruction (48 8B 0D / 48 8B 05)
+        uintptr_t instr = sub + 4;
+        int32_t disp = *(int32_t*)(instr + 3);
+        return instr + 7 + disp;
+    }
+
+    // Lightweight pointer sanity check — no API calls (AC-safe)
+    bool is_valid_ptr(uintptr_t addr)
+    {
+        return addr >= 0x10000 && addr < 0x7FFFFFFFFFFF;
+    }
+
+    void safe_copy(void* dst, const void* src, int size)
+    {
+        __try { __movsb((unsigned char*)dst, (const unsigned char*)src, size); }
+        __except (1) { __stosb((unsigned char*)dst, 0, size); }
+    }
+
+    // NoCRT strncpy
+    void safe_strcpy(char* dst, const char* src, int maxLen)
+    {
+        __try {
+            int i = 0;
+            while (src[i] && i < maxLen - 1) { dst[i] = src[i]; i++; }
+            dst[i] = '\0';
+        } __except (1) { dst[0] = '\0'; }
+    }
+
+    bool safe_strcmp(const char* a, const char* b)
+    {
+        while (*a && *b) { if (*a != *b) return false; a++; b++; }
+        return *a == *b;
+    }
+
+    // ── Match type constants ───────────────────────────────────────
+    constexpr int MT_FUTCHAMPS = 0x1E;
+
+    // Resolve match type via testfunc_match vtable chain.
+    // Returns raw int (0x1E = FUT Champions, 0x22 = Rivals, etc.) or -1 on failure.
+    int getMatchType()
+    {
+        char buf[192];
+
+        if (!g_testfuncMatch || !g_matchTypeMagic) {
+            log::debug("[OPP] getMatchType: testfuncMatch or magic not set\r\n");
+            return -1;
+        }
+
+        __try {
+            if (!is_valid_ptr(g_testfuncMatch)) { log::to_file("[OPP] BAIL getMatchType: testfuncMatch bad\r\n"); return -1; }
+            uint64_t basePtr = *(uint64_t*)g_testfuncMatch;
+            if (!is_valid_ptr(basePtr)) { log::to_file("[OPP] BAIL getMatchType: basePtr bad\r\n"); return -1; }
+
+            uint64_t vtbl = *(uint64_t*)basePtr;
+            if (!is_valid_ptr(vtbl + 0x30)) { log::to_file("[OPP] BAIL getMatchType: vtbl bad\r\n"); return -1; }
+
+            uint64_t fnAddr = *(uint64_t*)(vtbl + 0x30);
+            if (!is_valid_ptr(fnAddr)) { log::to_file("[OPP] BAIL getMatchType: vtbl+0x30 bad\r\n"); return -1; }
+
+            typedef __int64(__fastcall* FnType)(uint64_t, uint32_t);
+            auto fn = reinterpret_cast<FnType>(fnAddr);
+            __int64 v3 = spoof_call(fn, (uint64_t)basePtr, (uint32_t)0x0EBDBBE3);
+            if (!is_valid_ptr((uintptr_t)v3)) { log::to_file("[OPP] BAIL getMatchType: v3 bad\r\n"); return -1; }
+
+            uint64_t v3_vtbl = *(uint64_t*)v3;
+            if (!is_valid_ptr(v3_vtbl)) { log::to_file("[OPP] BAIL getMatchType: v3_vtbl bad\r\n"); return -1; }
+
+            uint64_t fnAddr2 = *(uint64_t*)(v3_vtbl + 0x18);
+            if (!is_valid_ptr(fnAddr2)) { log::to_file("[OPP] BAIL getMatchType: fnAddr2 bad\r\n"); return -1; }
+
+            auto call2 = reinterpret_cast<FnType>(fnAddr2);
+            __int64 v4 = spoof_call(call2, (uint64_t)v3, (uint32_t)0x0EBDBBE4);
+            if (!is_valid_ptr((uintptr_t)v4)) { log::to_file("[OPP] BAIL getMatchType: v4 bad\r\n"); return -1; }
+
+            uint64_t v4_vtbl = *(uint64_t*)v4;
+            if (!is_valid_ptr(v4_vtbl)) { log::to_file("[OPP] BAIL getMatchType: v4_vtbl bad\r\n"); return -1; }
+
+            uint32_t vtOff = g_matchTypeVtOff ? g_matchTypeVtOff : 0x1A0;
+            if (!is_valid_ptr(v4_vtbl + vtOff)) { log::to_file("[OPP] BAIL getMatchType: vtOff bad\r\n"); return -1; }
+            uint64_t fnAddr3 = *(uint64_t*)(v4_vtbl + vtOff);
+            if (!is_valid_ptr(fnAddr3)) { log::to_file("[OPP] BAIL getMatchType: fnAddr3 bad\r\n"); return -1; }
+
+            fmt::snprintf(buf, sizeof(buf), "[OPP] getMatchType: calling v4_vtbl+0x%X at %p\r\n",
+                vtOff, (void*)fnAddr3);
+            log::debug(buf);
+
+            // Signature: fn3(rcx=this, edx=magic, r8=&result)
+            typedef __int64(__fastcall* Fn3Type)(uint64_t, uint32_t, unsigned int*);
+            auto fn3 = reinterpret_cast<Fn3Type>(fnAddr3);
+
+            unsigned int result = 0;
+            spoof_call(fn3, (uint64_t)v4, (uint32_t)g_matchTypeMagic, &result);
+
+            fmt::snprintf(buf, sizeof(buf), "[OPP] getMatchType: result=%d (0x%X)\r\n", result, result);
+            log::debug(buf);
+
+            return (int)result;
+        }
+        __except (1) {
+            log::debug("[OPP] getMatchType: EXCEPTION\r\n");
+            return -1;
+        }
+    }
+
+    // ── get_object_result (mirrors Internal's helper) ───────────────
+
+    __int64 get_object_result()
+    {
+        log::debug("[OPP] get_object_result: calling func2...\r\n");
+
+        typedef __int64(__fastcall* GetterFn)();
+        auto getter = reinterpret_cast<GetterFn>(g_func2);
+
+        __int64 obj = 0;
+        __try { obj = spoof_call(getter); }
+        __except (1) {
+            log::debug("[OPP] get_object_result: func2 CRASHED\r\n");
+            return 0;
+        }
+
+        char buf[128];
+        fmt::snprintf(buf, sizeof(buf), "[OPP] get_object_result: func2 returned %p\r\n", (void*)obj);
+        log::debug(buf);
+
+        if (!obj) { log::to_file("[OPP] BAIL: func2 returned NULL\r\n"); return 0; }
+
+        __try {
+            if (!is_valid_ptr(obj)) { log::to_file("[OPP] BAIL: func2 result invalid ptr\r\n"); return 0; }
+            uintptr_t vtbl = *(uintptr_t*)obj;
+            if (!is_valid_ptr(vtbl + 0x180)) { log::to_file("[OPP] BAIL: obj vtbl invalid\r\n"); return 0; }
+
+            uintptr_t fnAddr = *(uintptr_t*)(vtbl + 0x180);
+            if (!is_valid_ptr(fnAddr)) { log::to_file("[OPP] BAIL: vtbl+0x180 invalid\r\n"); return 0; }
+
+            fmt::snprintf(buf, sizeof(buf), "[OPP] get_object_result: calling vtbl+0x180 at %p\r\n", (void*)fnAddr);
+            log::debug(buf);
+
+            typedef __int64(__fastcall* VFuncType)(__int64);
+            auto vfunc = reinterpret_cast<VFuncType>(fnAddr);
+            __int64 result = spoof_call(vfunc, obj);
+
+            fmt::snprintf(buf, sizeof(buf), "[OPP] get_object_result: vtbl+0x180 returned %p\r\n", (void*)result);
+            log::debug(buf);
+            return result;
+        }
+        __except (1) {
+            log::debug("[OPP] get_object_result: vtbl call CRASHED\r\n");
+            return 0;
+        }
+    }
+
+    // ── Extract stats from FutCooperativeServiceImpl ────────────────
+
+    void extract_stats()
+    {
+        char buf[256];
+
+        if (!g_testfuncMatch) {
+            log::debug("[OPP] extract_stats: testfunc_match is NULL, skipping stats\r\n");
+            return;
+        }
+
+        __try {
+            if (!is_valid_ptr(g_testfuncMatch)) return;
+            uint64_t basePtr = *(uint64_t*)g_testfuncMatch;
+            if (!is_valid_ptr(basePtr)) return;
+
+            uint64_t vtbl = *(uint64_t*)basePtr;
+            if (!is_valid_ptr(vtbl + 0x30)) return;
+
+            uint64_t fnAddr = *(uint64_t*)(vtbl + 0x30);
+            if (!is_valid_ptr(fnAddr)) return;
+
+            typedef __int64(__fastcall* FnType)(uint64_t, uint32_t);
+            auto fn = reinterpret_cast<FnType>(fnAddr);
+            __int64 v3 = spoof_call(fn, (uint64_t)basePtr, (uint32_t)0x1C3E87C8);
+            if (!is_valid_ptr((uintptr_t)v3)) return;
+
+            uint64_t v3_vtbl = *(uint64_t*)v3;
+            if (!is_valid_ptr(v3_vtbl + 0x18)) return;
+
+            uint64_t fnAddr2 = *(uint64_t*)(v3_vtbl + 0x18);
+            if (!is_valid_ptr(fnAddr2)) return;
+
+            auto call2 = reinterpret_cast<FnType>(fnAddr2);
+            __int64 v4 = spoof_call(call2, (uint64_t)v3, (uint32_t)0x1C3E87C9);
+            if (!is_valid_ptr((uintptr_t)v4)) return;
+
+            if (!is_valid_ptr((uintptr_t)v4)) return;
+            uint64_t v4_vtbl = *(uint64_t*)v4;
+            if (!is_valid_ptr(v4_vtbl + 0x190)) return;
+
+            uint64_t fnAddr3 = *(uint64_t*)(v4_vtbl + 0x190);
+            if (!is_valid_ptr(fnAddr3)) return;
+
+            typedef __int64(__fastcall* Fn3Type)(uint64_t);
+            auto call3 = reinterpret_cast<Fn3Type>(fnAddr3);
+            __int64 finalResult = spoof_call(call3, (uint64_t)v4);
+            if (!is_valid_ptr((uintptr_t)finalResult)) return;
+
+            auto pWords = reinterpret_cast<uint32_t*>(finalResult);
+
+            opp_info::g_opponent.drRating     = (int)pWords[0x10];
+            opp_info::g_opponent.chemistry    = (int)pWords[0x11];
+            opp_info::g_opponent.teamOvr      = (int)pWords[0x12];
+            opp_info::g_opponent.skillRating  = (int)pWords[0x13];
+            opp_info::g_opponent.seasonWins   = (int)pWords[0x08];
+            opp_info::g_opponent.seasonLosses = (int)pWords[0x09];
+            opp_info::g_opponent.seasonTies   = (int)pWords[0x0A];
+            opp_info::g_opponent.totalGames   = (int)pWords[0x0B];
+            opp_info::g_opponent.dnfPercent   = (int)pWords[0x0C];
+            opp_info::g_opponent.starLevel    = (int)pWords[0x0D];
+            opp_info::g_opponent.badgeId      = (int)pWords[0x0F];
+
+            // Club name at pWords[0x14], club tag at pWords[0x34]
+            safe_strcpy(opp_info::g_opponent.clubName,
+                reinterpret_cast<const char*>(pWords + 0x14), sizeof(opp_info::g_opponent.clubName));
+            safe_strcpy(opp_info::g_opponent.clubTag,
+                reinterpret_cast<const char*>(pWords + 0x34), sizeof(opp_info::g_opponent.clubTag));
+
+            fmt::snprintf(buf, sizeof(buf),
+                "[OPP] Stats: DR=%d Chem=%d OVR=%d Skill=%d W=%d L=%d D=%d DNF=%d\r\n",
+                opp_info::g_opponent.drRating, opp_info::g_opponent.chemistry,
+                opp_info::g_opponent.teamOvr, opp_info::g_opponent.skillRating,
+                opp_info::g_opponent.seasonWins, opp_info::g_opponent.seasonLosses,
+                opp_info::g_opponent.seasonTies, opp_info::g_opponent.dnfPercent);
+            log::debug(buf);
+
+            // ── Season info (creation date) ─────────────────────────
+            if (g_seasonInfoFn) {
+                auto v31 = pWords[0x0E];
+                char v11[64] = {};
+
+                fmt::snprintf(buf, sizeof(buf), "[OPP] Calling getSeasonInfo(0x%X) at %p\r\n",
+                    v31, (void*)g_seasonInfoFn);
+                log::debug(buf);
+
+                typedef void(__fastcall* SeasonFn)(unsigned int, __int64);
+                auto seasonFn = reinterpret_cast<SeasonFn>(g_seasonInfoFn);
+                spoof_call(seasonFn, v31, reinterpret_cast<__int64>(v11));
+
+                int month = *(int*)(v11 + 0x10);
+                unsigned int year = *(unsigned int*)(v11 + 0x14);
+                year += 0x76C;
+
+                opp_info::g_opponent.creationYear  = year;
+                opp_info::g_opponent.creationMonth = month;
+
+                fmt::snprintf(buf, sizeof(buf), "[OPP] Account created: %u/%d\r\n", year, month);
+                log::debug(buf);
+            }
+
+        } __except (1) {
+            log::debug("[OPP] extract_stats: EXCEPTION during stats extraction\r\n");
+        }
+    }
+
+    // ── IDK Hook Detour (creation date — all match types) ────────────
+    //
+    // Fires for every match type incl. FUT Champions.
+    // Reads a1+dataOffset → +0x88 → GetSeasonInfo → creation year/month.
+
+    extern "C" unsigned long long IdkHookDetour(
+        void* ctx_raw,
+        unsigned long long a1,
+        unsigned long long /*a2*/)
+    {
+        char buf[192];
+        fmt::snprintf(buf, sizeof(buf), "[OPP-IDK] Detour fired, a1=%p\r\n", (void*)a1);
+        log::debug(buf);
+
+        if (!g_seasonInfoFn || !a1 || !g_idkDataOffset) return 0;
+        if (!is_valid_ptr(a1) || !is_valid_ptr(a1 + g_idkDataOffset + 8)) {
+            log::to_file("[OPP-IDK] BAIL: a1 ptr range invalid\r\n"); return 0;
+        }
+
+        __int64 v14 = *(__int64*)((uint8_t*)a1 + g_idkDataOffset);
+        if (!is_valid_ptr((uintptr_t)v14) || !is_valid_ptr((uintptr_t)v14 + 0x90)) {
+            log::to_file("[OPP-IDK] BAIL: v14 ptr range invalid\r\n"); return 0;
+        }
+
+        unsigned int v13 = *(unsigned int*)(v14 + 0x88);
+        if (!v13) { log::to_file("[OPP-IDK] BAIL: v13=0, skip GetSeasonInfo\r\n"); return 0; }
+
+        char v11[64] = {};
+        typedef void(__fastcall* SeasonFn)(unsigned int, __int64);
+        auto seasonFn = reinterpret_cast<SeasonFn>(g_seasonInfoFn);
+        spoof_call(seasonFn, v13, reinterpret_cast<__int64>(v11));
+
+        int month = *(int*)(v11 + 0x10);
+        unsigned int year = *(unsigned int*)(v11 + 0x14);
+        year += 0x76C;
+
+        opp_info::g_opponent.creationYear  = year;
+        opp_info::g_opponent.creationMonth = month;
+
+        return 0; // passthrough to original
+    }
+
+    // ── EPT Hook Detour ─────────────────────────────────────────────
+    //
+    // Called by EPT stub when vtable[1] fires.
+    // Signature matches EPT register context callback:
+    //   ctx_raw  = register_context_t*
+    //   a1       = original RCX
+    //   a2       = original RDX (== 0x75AD when match found)
+
+    extern "C" unsigned long long MatchFoundDetour(
+        void* ctx_raw,
+        unsigned long long a1,
+        unsigned long long a2)
+    {
+        char buf[256];
+        fmt::snprintf(buf, sizeof(buf),
+            "[OPP] MatchFoundDetour: a1=%p a2=0x%X\r\n", (void*)a1, (unsigned int)a2);
+        log::debug(buf);
+
+        if ((unsigned int)a2 != 0x75AD)
+            return 0; // not a match-found event, passthrough
+
+        log::debug("[OPP] >>> MATCH FOUND (a2=0x75AD) <<<\r\n");
+
+        // Clear previous data
+        __stosb((unsigned char*)&opp_info::g_opponent, 0, sizeof(opp_info::g_opponent));
+
+        // ── Step 1: Call getOpponentFunc_1 ──────────────────────────
+        __try {
+            typedef __int64(__fastcall* Fn1Type)();
+            auto fn1 = reinterpret_cast<Fn1Type>(g_func1);
+
+            fmt::snprintf(buf, sizeof(buf), "[OPP] Calling func1 at %p\r\n", (void*)g_func1);
+            log::debug(buf);
+
+            __int64 v18 = spoof_call(fn1);
+
+            fmt::snprintf(buf, sizeof(buf), "[OPP] func1 returned v18=%p\r\n", (void*)v18);
+            log::debug(buf);
+
+            if (!v18) { log::debug("[OPP] v18 is NULL, aborting\r\n"); return 0; }
+
+            // ── Step 2: get_object_result → dereference +0x838 ──────
+            __int64 result2 = get_object_result();
+            if (!result2) { log::debug("[OPP] result2 is NULL, aborting\r\n"); return 0; }
+
+            fmt::snprintf(buf, sizeof(buf), "[OPP] result2=%p, reading +0x838\r\n", (void*)result2);
+            log::debug(buf);
+
+            __int64 inner = *(__int64*)(result2 + 0x838);
+            if (!inner) { log::debug("[OPP] result2+0x838 is NULL, aborting\r\n"); return 0; }
+
+            fmt::snprintf(buf, sizeof(buf), "[OPP] inner (result2+0x838)=%p\r\n", (void*)inner);
+            log::debug(buf);
+
+            // ── Step 3: Call getOpponentFunc_3(inner, v18) → v19 ────
+            typedef __int64(__fastcall* Fn3Type)(__int64, __int64);
+            auto fn3 = reinterpret_cast<Fn3Type>(g_func3);
+
+            fmt::snprintf(buf, sizeof(buf), "[OPP] Calling func3(%p, %p)\r\n", (void*)inner, (void*)v18);
+            log::debug(buf);
+
+            __int64 v19 = spoof_call(fn3, inner, v18);
+
+            fmt::snprintf(buf, sizeof(buf), "[OPP] func3 returned v19=%p\r\n", (void*)v19);
+            log::debug(buf);
+
+            if (!v19) { log::debug("[OPP] v19 is NULL, aborting\r\n"); return 0; }
+
+            // ── v19 raw dump (first 0x130 bytes as DWORDs) ────────
+            {
+                log::debug("[OPP] v19 raw dump:\r\n");
+                char dumpLine[128];
+                uint32_t* dw = reinterpret_cast<uint32_t*>(v19);
+                for (int i = 0; i < 0x130 / 4; i += 4) {
+                    fmt::snprintf(dumpLine, sizeof(dumpLine),
+                        "  +0x%03X: %08X %08X %08X %08X\r\n",
+                        i * 4, dw[i], dw[i+1], dw[i+2], dw[i+3]);
+                    log::debug(dumpLine);
+                }
+                // Name + platform as strings
+                char strBuf[80];
+                safe_strcpy(strBuf, reinterpret_cast<const char*>(v19 + 0xF0), 32);
+                fmt::snprintf(dumpLine, sizeof(dumpLine), "  +0x0F0 (platform): %s\r\n", strBuf);
+                log::debug(dumpLine);
+                safe_strcpy(strBuf, reinterpret_cast<const char*>(v19 + 0x110), 48);
+                fmt::snprintf(dumpLine, sizeof(dumpLine), "  +0x110 (name):     %s\r\n", strBuf);
+                log::debug(dumpLine);
+            }
+
+            // ── Step 4: Extract name, platform, IDs from v19 ────────
+            safe_strcpy(opp_info::g_opponent.name,
+                reinterpret_cast<const char*>(v19 + 0x110), sizeof(opp_info::g_opponent.name));
+
+            safe_strcpy(opp_info::g_opponent.platform,
+                reinterpret_cast<const char*>(v19 + 0xF0), sizeof(opp_info::g_opponent.platform));
+
+            opp_info::g_opponent.personaId = *(uint64_t*)(v19 + 0x00);
+            opp_info::g_opponent.nucleusId = *(uint64_t*)(v19 + 0x08);
+
+            // Normalize platform string
+            if (safe_strcmp(opp_info::g_opponent.platform, "cem_ea_id")) {
+                opp_info::g_opponent.platform[0] = 'P';
+                opp_info::g_opponent.platform[1] = 'C';
+                opp_info::g_opponent.platform[2] = '\0';
+            }
+
+            fmt::snprintf(buf, sizeof(buf),
+                "[OPP] Name: %s | Platform: %s | Persona: %llu | Nucleus: %llu\r\n",
+                opp_info::g_opponent.name, opp_info::g_opponent.platform,
+                opp_info::g_opponent.personaId, opp_info::g_opponent.nucleusId);
+            log::debug(buf);
+
+            opp_info::g_opponent.valid = true;
+
+        } __except (1) {
+            log::debug("[OPP] EXCEPTION during opponent info extraction\r\n");
+        }
+
+        // ── Step 5: Match type check → extract stats ────────────────
+        int matchType = getMatchType();
+        {
+            const char* mtName = "Unknown";
+            if (matchType == 0x1B) mtName = "Classic Match";
+            else if (matchType == 0x1E) mtName = "FUT Champions";
+            else if (matchType == 0x22) mtName = "Division Rivals";
+
+            char mtBuf[128];
+            fmt::snprintf(mtBuf, sizeof(mtBuf),
+                "[OPP] MatchType: %d (0x%X) = %s\r\n", matchType, matchType, mtName);
+            log::debug(mtBuf);
+        }
+
+        if (matchType == MT_FUTCHAMPS) {
+            log::debug("[OPP] FUT Champions — skipping stats (would overwrite basic info)\r\n");
+        } else {
+            extract_stats();
+        }
+
+        toast::Show(toast::Type::Info, opp_info::g_opponent.name[0]
+            ? opp_info::g_opponent.name : "Opponent found");
+
+        log::debug("[OPP] MatchFoundDetour complete, passing through\r\n");
+        return 0; // passthrough to original
+    }
+}
+
+// ── Public API ──────────────────────────────────────────────────────
+
+bool opp_info::Init(void* gameBase, unsigned long gameSize)
+{
+    char buf[256];
+    log::debug("[OPP] Init: scanning patterns...\r\n");
+
+    // 1. OnlineMatchmakingPreMatchController vtable (RIP-relative LEA)
+    {
+        void* m = game::pattern_scan(gameBase, gameSize,
+            "48 8D 05 ? ? ? ? 48 89 01 48 8B D9 48 8D 05 ? ? ? ? 48 89 81 ? ? ? ? 74 73");
+        if (m) {
+            g_vtableBase = resolve_rip3_7((uintptr_t)m);
+            fmt::snprintf(buf, sizeof(buf), "[OPP] vtableBase: %p\r\n", (void*)g_vtableBase);
+            log::debug(buf);
+        } else {
+            log::debug("[OPP] ERROR: vtable pattern not found\r\n");
+        }
+    }
+
+    // 2. getOpponentFunc_1 (E8 call resolution)
+    {
+        void* m = game::pattern_scan(gameBase, gameSize,
+            "E8 ? ? ? ? 48 8B C8 E8 ? ? ? ? 48 8B F0 48 85 C0 74 ? E8 ? ? ? ? 48 8D 4C 24");
+        if (m) {
+            g_func1 = resolve_call_e8((uintptr_t)m);
+            fmt::snprintf(buf, sizeof(buf), "[OPP] func1: %p\r\n", (void*)g_func1);
+            log::debug(buf);
+        } else {
+            log::debug("[OPP] ERROR: func1 pattern not found\r\n");
+        }
+    }
+
+    // 3. getOpponentFunc_2 (E8 call resolution)
+    {
+        void* m = game::pattern_scan(gameBase, gameSize,
+            "E8 ? ? ? ? 48 85 C0 74 ? 48 8B 10 48 8B C8 FF 92 ? ? ? ? 48 8B D8 48 8B 8B");
+        if (m) {
+            g_func2 = resolve_call_e8((uintptr_t)m);
+            fmt::snprintf(buf, sizeof(buf), "[OPP] func2: %p\r\n", (void*)g_func2);
+            log::debug(buf);
+        } else {
+            log::debug("[OPP] ERROR: func2 pattern not found\r\n");
+        }
+    }
+
+    // 4. getOpponentFunc_3 (E8 call resolution)
+    {
+        void* m = game::pattern_scan(gameBase, gameSize,
+            "E8 ? ? ? ? EB 09 48 8D 56 78");
+        if (m) {
+            g_func3 = resolve_call_e8((uintptr_t)m);
+            fmt::snprintf(buf, sizeof(buf), "[OPP] func3: %p\r\n", (void*)g_func3);
+            log::debug(buf);
+        } else {
+            log::debug("[OPP] ERROR: func3 pattern not found\r\n");
+        }
+    }
+
+    // 5. getSeasonInfo (direct address)
+    {
+        void* m = game::pattern_scan(gameBase, gameSize,
+            "40 53 48 83 EC ? 8B C1 48 8B DA");
+        if (m) {
+            g_seasonInfoFn = (uintptr_t)m;
+            fmt::snprintf(buf, sizeof(buf), "[OPP] seasonInfoFn: %p\r\n", (void*)g_seasonInfoFn);
+            log::debug(buf);
+        } else {
+            log::debug("[OPP] WARNING: seasonInfo pattern not found (creation date unavailable)\r\n");
+        }
+    }
+
+    // 6. testfunc_match (RIP-relative pointer)
+    {
+        void* m = game::pattern_scan(gameBase, gameSize,
+            "48 8B 0D ? ? ? ? 48 8B 01 48 FF 60 ? CC CC 40 57");
+        if (m) {
+            g_testfuncMatch = resolve_rip3_7((uintptr_t)m);
+            fmt::snprintf(buf, sizeof(buf), "[OPP] testfuncMatch: %p\r\n", (void*)g_testfuncMatch);
+            log::debug(buf);
+        } else {
+            log::debug("[OPP] WARNING: testfunc_match pattern not found (stats unavailable)\r\n");
+        }
+    }
+
+    // 7. Match type magic value + vtable offset (dynamic from "mov edx, imm32")
+    {
+        void* m = game::pattern_scan(gameBase, gameSize,
+            "BA ? ? ? ? 48 8B CE FF 90 ? ? ? ? 44 8B 44 24");
+        if (m) {
+            g_matchTypeMagic = *(uint32_t*)((uintptr_t)m + 1);    // imm32 after BA
+            g_matchTypeVtOff = *(uint32_t*)((uintptr_t)m + 10);  // disp32 after FF 90 opcode
+            fmt::snprintf(buf, sizeof(buf),
+                "[OPP] matchTypeMagic: 0x%X  vtOff: 0x%X\r\n", g_matchTypeMagic, g_matchTypeVtOff);
+            log::debug(buf);
+        } else {
+            log::debug("[OPP] WARNING: matchType pattern not found (FUT Champs guard disabled)\r\n");
+        }
+    }
+
+    // 8. idk_hook vtable (creation date hook — fires for all match types)
+    {
+        void* m = game::pattern_scan(gameBase, gameSize,
+            "48 8D 0D ? ? ? ? 48 8D 05 ? ? ? ? 48 89 43 ? 33 C0 89 43 ? 87 43 ? 48 8D 05 ? ? ? ? 48 89 0B 48 89 43 ? 48 8D 4B ? 48 8D 05 ? ? ? ? 48 89 43");
+        if (m) {
+            g_idkVtable = resolve_rip3_7((uintptr_t)m);
+            fmt::snprintf(buf, sizeof(buf), "[OPP] idkVtable: %p\r\n", (void*)g_idkVtable);
+            log::debug(buf);
+        } else {
+            log::debug("[OPP] WARNING: idk_hook pattern not found (FUT Champs creation date unavailable)\r\n");
+        }
+    }
+
+    // Read vtable slot 1 (MatchFound hook target)
+    if (g_vtableBase) {
+        __try {
+            uintptr_t* vtable = reinterpret_cast<uintptr_t*>(g_vtableBase);
+            g_targetFunc = vtable[1];
+            fmt::snprintf(buf, sizeof(buf), "[OPP] vtable[1] target: %p\r\n", (void*)g_targetFunc);
+            log::debug(buf);
+        } __except (1) {
+            log::debug("[OPP] ERROR: cannot read vtable[1]\r\n");
+            g_targetFunc = 0;
+        }
+    }
+
+    // Dynamically find IDK function + vtable slot + data offset
+    if (g_idkVtable && g_seasonInfoFn) {
+        // Pattern scan for the IDK function prologue
+        void* idkFunc = game::pattern_scan(gameBase, gameSize,
+            "40 55 41 56 41 57 48 83 EC ? 48 8B A9 ? ? ? ? 4C 8B F9");
+        if (idkFunc) {
+            g_idkFuncAddr = (uintptr_t)idkFunc;
+
+            // Read data offset from "48 8B A9 XX XX XX XX" (displacement at prologue+13)
+            g_idkDataOffset = *(uint32_t*)((uintptr_t)idkFunc + 13);
+
+            fmt::snprintf(buf, sizeof(buf), "[OPP] idkFunc: %p  dataOffset: 0x%X\r\n",
+                idkFunc, g_idkDataOffset);
+            log::debug(buf);
+
+            // Search vtable for this function pointer to find the slot
+            __try {
+                uintptr_t* vtable = reinterpret_cast<uintptr_t*>(g_idkVtable);
+                for (int i = 360; i < 400; i++) {
+                    if (vtable[i] == g_idkFuncAddr) {
+                        g_idkSlot = i;
+                        g_idkTargetFunc = vtable[i];
+                        fmt::snprintf(buf, sizeof(buf), "[OPP] idkVtable[%d] = %p (MATCH)\r\n",
+                            i, (void*)g_idkTargetFunc);
+                        log::debug(buf);
+                        break;
+                    }
+                }
+                if (g_idkSlot < 0)
+                    log::debug("[OPP] WARNING: IDK function not found in vtable[360..399]\r\n");
+            } __except (1) {
+                log::debug("[OPP] ERROR: exception scanning IDK vtable\r\n");
+            }
+        } else {
+            log::debug("[OPP] WARNING: IDK prologue pattern not found\r\n");
+        }
+    }
+
+    // Minimum requirement: vtable + func1/2/3
+    g_initialized = g_vtableBase && g_targetFunc && g_func1 && g_func2 && g_func3;
+
+    fmt::snprintf(buf, sizeof(buf),
+        "[OPP] Init %s — vtbl:%p tgt:%p f1:%p f2:%p f3:%p season:%p match:%p idk:%p\r\n",
+        g_initialized ? "OK" : "INCOMPLETE",
+        (void*)g_vtableBase, (void*)g_targetFunc,
+        (void*)g_func1, (void*)g_func2, (void*)g_func3,
+        (void*)g_seasonInfoFn, (void*)g_testfuncMatch,
+        (void*)g_idkTargetFunc);
+    log::debug(buf);
+
+    return g_initialized;
+}
+
+bool opp_info::InstallHook()
+{
+    if (!g_initialized || !g_targetFunc) {
+        log::debug("[OPP] InstallHook: not initialized\r\n");
+        return false;
+    }
+
+    if (g_hooked) {
+        log::debug("[OPP] InstallHook: already installed\r\n");
+        return true;
+    }
+
+    log::debug("[OPP] Installing EPT hook on matchmaking vtable[1]...\r\n");
+
+    bool ok = ept::install_hook(g_hookParams,
+        reinterpret_cast<unsigned char*>(g_targetFunc),
+        (void*)&MatchFoundDetour, "MatchFound");
+
+    if (ok) {
+        g_hooked = true;
+        log::debug("[OPP] EPT hook installed on matchmaking vtable[1]\r\n");
+        toast::Show(toast::Type::Success, "Opponent Info hook active");
+    } else {
+        log::debug("[OPP] ERROR: EPT hook install FAILED\r\n");
+        toast::Show(toast::Type::Error, "Opponent Info hook failed");
+    }
+
+    // Install IDK hook (creation date for FUT Champs)
+    if (g_idkTargetFunc && !g_idkHooked) {
+        log::debug("[OPP] Installing EPT hook on idk vtable[372]...\r\n");
+
+        bool idkOk = ept::install_hook(g_idkHookParams,
+            reinterpret_cast<unsigned char*>(g_idkTargetFunc),
+            (void*)&IdkHookDetour, "IdkCreationDate");
+
+        if (idkOk) {
+            g_idkHooked = true;
+            log::debug("[OPP] IDK hook installed (creation date for all match types)\r\n");
+        } else {
+            log::debug("[OPP] WARNING: IDK hook install failed (FUT Champs creation date unavailable)\r\n");
+        }
+    }
+
+    return ok;
+}
+
+bool opp_info::IsReady()  { return g_initialized; }
+bool opp_info::IsHooked() { return g_hooked; }

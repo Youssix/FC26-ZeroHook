@@ -13,7 +13,6 @@
 // ── Globals ─────────────────────────────────────────────────────────
 uintptr_t rage::slider_ptr      = 0;
 uintptr_t rage::msg_dispatcher  = 0;
-uintptr_t rage::dispatch_vfunc  = 0;
 
 // ── Helpers ─────────────────────────────────────────────────────────
 namespace
@@ -30,20 +29,38 @@ namespace
         if (!addr || addr < 0x10000 || addr >= 0x7FFFFFFFFFFF) return 0;
         return *reinterpret_cast<uintptr_t*>(addr);
     }
+}
 
-    typedef void(__fastcall* dispatch_fn_t)(
-        uint64_t rcx, uint64_t* rdx, uint64_t* r8, void* r9,
-        int param1, char param2, unsigned char param3);
+// ── Public dispatcher resolver (used by rage actions + sliders) ─────
+//
+// Verified via CE on FC26.exe (post-update build):
+//   msg_dispatcher       = RIP-resolved global addr
+//   *msg_dispatcher      = intermediate wrapper (heap)
+//   **msg_dispatcher     = actual dispatcher object — passed as rcx
+//   ***msg_dispatcher    = vtable in FC26.exe data section
+//   vtable[9] = *(vtable+0x48) = real dispatch fn (Frostbite vtable[9] convention)
+//
+// Resolves the chain dynamically — no need to pattern-scan a thunk.
+bool rage::get_dispatch(uintptr_t& outRcx, dispatch_fn_t& outFn)
+{
+    if (!rage::msg_dispatcher) return false;
 
-    bool get_dispatch(uintptr_t& outRcx, dispatch_fn_t& outFn)
-    {
-        if (!rage::msg_dispatcher || !rage::dispatch_vfunc)
-            return false;
-        outRcx = safe_deref(rage::msg_dispatcher);
-        if (!outRcx) return false;
-        outFn = reinterpret_cast<dispatch_fn_t>(rage::dispatch_vfunc);
-        return true;
-    }
+    uintptr_t v50 = safe_deref(rage::msg_dispatcher);
+    if (!v50) return false;
+
+    uintptr_t v51 = safe_deref(v50);
+    if (!v51) return false;
+
+    outRcx = v51;
+
+    uintptr_t vtable = safe_deref(v51);
+    if (!vtable) return false;
+
+    uintptr_t fnAddr = safe_deref(vtable + 0x48);
+    if (!fnAddr) return false;
+
+    outFn = reinterpret_cast<dispatch_fn_t>(fnAddr);
+    return true;
 }
 
 // ── Pattern scan init ───────────────────────────────────────────────
@@ -74,18 +91,12 @@ bool rage::InitOffsets(void* gameBase, unsigned long gameSize)
         log::debug("[RAGE] ERROR: msg_dispatcher not found\r\n");
     }
 
-    // 3. dispatch_action_vfunc
-    void* m3 = game::pattern_scan(gameBase, gameSize,
-        "48 8B 01 4C 8B 50 48 0F B6 44 24");
-    if (m3) {
-        dispatch_vfunc = (uintptr_t)m3;
-        fmt::snprintf(buf, sizeof(buf), "[RAGE] dispatch_vfunc: %p\r\n", (void*)dispatch_vfunc);
-        log::debug(buf);
-    } else {
-        log::debug("[RAGE] ERROR: dispatch_vfunc not found\r\n");
-    }
+    // dispatch_vfunc is no longer pattern-scanned. The .rodata thunk that
+    // matched was a generic vtable[9] dispatcher with no inner-object wrapper.
+    // get_dispatch() now resolves vtable[9] of the real dispatcher object at
+    // call time via msg_dispatcher chain, which is what the game itself does.
 
-    bool ok = slider_ptr && msg_dispatcher && dispatch_vfunc;
+    bool ok = slider_ptr && msg_dispatcher;
     fmt::snprintf(buf, sizeof(buf), "[RAGE] InitOffsets: %s\r\n", ok ? "ALL OK" : "SOME MISSING");
     log::debug(buf);
     return ok;
@@ -95,28 +106,54 @@ bool rage::InitOffsets(void* gameBase, unsigned long gameSize)
 // ── crash_opps ──────────────────────────────────────────────────────
 void rage::crash_opps()
 {
-    uintptr_t rcx; dispatch_fn_t fn;
-    if (!get_dispatch(rcx, fn)) {
-        log::debug("[RAGE] crash_opps: dispatch not ready\r\n");
+    char buf[256];
+    log::debug("[RAGE] crash_opps: ENTER\r\n");
+
+    fmt::snprintf(buf, sizeof(buf),
+        "[RAGE] crash_opps: msg_dispatcher=%p\r\n",
+        (void*)rage::msg_dispatcher);
+    log::debug(buf);
+
+    uintptr_t rcx = 0; rage::dispatch_fn_t fn = nullptr;
+    if (!rage::get_dispatch(rcx, fn)) {
+        log::debug("[RAGE] crash_opps: dispatch not ready (offsets stale?)\r\n");
+        toast::Show(toast::Type::Error, "Dispatch not ready");
         return;
     }
+
+    fmt::snprintf(buf, sizeof(buf),
+        "[RAGE] crash_opps: rcx=%p fn=%p\r\n", (void*)rcx, (void*)fn);
+    log::debug(buf);
 
     uint64_t v32 = 0x75879024;
     int v33 = 0x90;
 
-    hook::g_allow_attack_send = true;
-    spoof_call(fn, (uint64_t)rcx, (uint64_t*)&v32, (uint64_t*)&v32,
-        (void*)&v33, (int)1, (char)1, (unsigned char)0);
-    hook::g_allow_attack_send = false;
+    log::debug("[RAGE] crash_opps: dispatching...\r\n");
 
-    toast::Show(toast::Type::Success, "Crash sent to opponent");
-    log::debug("[RAGE] crash_opps sent\r\n");
+    __try {
+        hook::g_allow_attack_send = true;
+        spoof_call(fn, (uint64_t)rcx, (uint64_t*)&v32, (uint64_t*)&v32,
+            (void*)&v33, (int)1, (char)1, (unsigned char)0);
+        hook::g_allow_attack_send = false;
+
+        toast::Show(toast::Type::Success, "Crash sent to opponent");
+        log::debug("[RAGE] crash_opps: SUCCESS\r\n");
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        hook::g_allow_attack_send = false;
+        DWORD code = GetExceptionCode();
+        fmt::snprintf(buf, sizeof(buf),
+            "[RAGE] crash_opps: EXCEPTION 0x%08X — offsets are stale, game updated\r\n", code);
+        log::debug(buf);
+        toast::Show(toast::Type::Error, "Crash opps failed (game updated?)");
+    }
 }
 
 // ── pause_op_game (Freeze 1) ────────────────────────────────────────
 void rage::pause_op_game()
 {
-    uintptr_t rcx; dispatch_fn_t fn;
+    log::debug("[RAGE] pause_op_game: ENTER\r\n");
+    uintptr_t rcx = 0; dispatch_fn_t fn = nullptr;
     if (!get_dispatch(rcx, fn)) {
         log::debug("[RAGE] pause_op_game: dispatch not ready\r\n");
         return;
@@ -127,19 +164,29 @@ void rage::pause_op_game()
 
     uint64_t v32 = 0x406CE419;
 
-    hook::g_allow_attack_send = true;
-    spoof_call(fn, (uint64_t)rcx, (uint64_t*)&v32, (uint64_t*)&v32,
-        (void*)v147, (int)0x840, (char)0xFFFFFFFF, (unsigned char)0);
-    hook::g_allow_attack_send = false;
-
-    toast::Show(toast::Type::Success, "Freeze 1 sent to opponent");
-    log::debug("[RAGE] Freeze 1 sent\r\n");
+    __try {
+        hook::g_allow_attack_send = true;
+        spoof_call(fn, (uint64_t)rcx, (uint64_t*)&v32, (uint64_t*)&v32,
+            (void*)v147, (int)0x840, (char)0xFFFFFFFF, (unsigned char)0);
+        hook::g_allow_attack_send = false;
+        toast::Show(toast::Type::Success, "Freeze 1 sent to opponent");
+        log::debug("[RAGE] pause_op_game: SUCCESS\r\n");
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        hook::g_allow_attack_send = false;
+        char buf[128];
+        fmt::snprintf(buf, sizeof(buf),
+            "[RAGE] pause_op_game: EXCEPTION 0x%08X\r\n", GetExceptionCode());
+        log::debug(buf);
+        toast::Show(toast::Type::Error, "Freeze 1 failed");
+    }
 }
 
 // ── pause_op_game_new (Freeze 2) ────────────────────────────────────
 void rage::pause_op_game_new()
 {
-    uintptr_t rcx; dispatch_fn_t fn;
+    log::debug("[RAGE] pause_op_game_new: ENTER\r\n");
+    uintptr_t rcx = 0; dispatch_fn_t fn = nullptr;
     if (!get_dispatch(rcx, fn)) {
         log::debug("[RAGE] pause_op_game_new: dispatch not ready\r\n");
         return;
@@ -149,19 +196,29 @@ void rage::pause_op_game_new()
     uint64_t v29 = 0xA477B52B;
     int64_t v27 = 0;
 
-    hook::g_allow_attack_send = true;
-    spoof_call(fn, (uint64_t)rcx, (uint64_t*)&v29, (uint64_t*)&v28,
-        (void*)&v27, (int)1, (char)0xFF, (unsigned char)0);
-    hook::g_allow_attack_send = false;
-
-    toast::Show(toast::Type::Success, "Freeze 2 sent to opponent");
-    log::debug("[RAGE] Freeze 2 sent\r\n");
+    __try {
+        hook::g_allow_attack_send = true;
+        spoof_call(fn, (uint64_t)rcx, (uint64_t*)&v29, (uint64_t*)&v28,
+            (void*)&v27, (int)1, (char)0xFF, (unsigned char)0);
+        hook::g_allow_attack_send = false;
+        toast::Show(toast::Type::Success, "Freeze 2 sent to opponent");
+        log::debug("[RAGE] pause_op_game_new: SUCCESS\r\n");
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        hook::g_allow_attack_send = false;
+        char buf[128];
+        fmt::snprintf(buf, sizeof(buf),
+            "[RAGE] pause_op_game_new: EXCEPTION 0x%08X\r\n", GetExceptionCode());
+        log::debug(buf);
+        toast::Show(toast::Type::Error, "Freeze 2 failed");
+    }
 }
 
 // ── slider_bomb ─────────────────────────────────────────────────────
 void rage::slider_bomb()
 {
-    uintptr_t rcx; dispatch_fn_t fn;
+    log::debug("[RAGE] slider_bomb: ENTER\r\n");
+    uintptr_t rcx = 0; dispatch_fn_t fn = nullptr;
     if (!get_dispatch(rcx, fn)) {
         log::debug("[RAGE] slider_bomb: dispatch not ready\r\n");
         return;
@@ -191,13 +248,22 @@ void rage::slider_bomb()
     *reinterpret_cast<unsigned int*>(buffer + 0x780) = 2;
 
     uint64_t opcode = 0x75879024;
-    hook::g_allow_attack_send = true;
-    spoof_call(fn, (uint64_t)rcx, (uint64_t*)&opcode, (uint64_t*)&opcode,
-        (void*)buffer, (int)0x784, (char)0xFF, (unsigned char)0);
-    hook::g_allow_attack_send = false;
-
-    toast::Show(toast::Type::Success, "Slider Bomb sent to opponent");
-    log::debug("[RAGE] slider_bomb sent\r\n");
+    __try {
+        hook::g_allow_attack_send = true;
+        spoof_call(fn, (uint64_t)rcx, (uint64_t*)&opcode, (uint64_t*)&opcode,
+            (void*)buffer, (int)0x784, (char)0xFF, (unsigned char)0);
+        hook::g_allow_attack_send = false;
+        toast::Show(toast::Type::Success, "Slider Bomb sent to opponent");
+        log::debug("[RAGE] slider_bomb: SUCCESS\r\n");
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        hook::g_allow_attack_send = false;
+        char buf[128];
+        fmt::snprintf(buf, sizeof(buf),
+            "[RAGE] slider_bomb: EXCEPTION 0x%08X\r\n", GetExceptionCode());
+        log::debug(buf);
+        toast::Show(toast::Type::Error, "Slider Bomb failed");
+    }
 }
 
 #endif // !STANDARD_BUILD
@@ -226,9 +292,9 @@ void rage::kick_opponent(int dcReason)
         default: v1 = 1;    break;
     }
 
-    if (*reinterpret_cast<unsigned char*>(v0 + 0x5D72) != 1) {
-        *reinterpret_cast<unsigned char*>(v0 + 0x5D74) = v1;
-        *reinterpret_cast<unsigned char*>(v0 + 0x5D72) = 1;
+    if (*reinterpret_cast<unsigned char*>(v0 + 0x5D62) != 1) {
+        *reinterpret_cast<unsigned char*>(v0 + 0x5D64) = v1;
+        *reinterpret_cast<unsigned char*>(v0 + 0x5D62) = 1;
     }
 
     toast::Show(toast::Type::Success, "Kick sent to opponent");

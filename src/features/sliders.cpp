@@ -160,19 +160,10 @@ void sliders::RefreshPlayerNames()
 
 void sliders::ApplySliders()
 {
-    if (!rage::msg_dispatcher || !rage::dispatch_vfunc) {
-        log::debug("[SLIDERS] ApplySliders: dispatch not ready\r\n");
-        return;
-    }
-
     uintptr_t rcx = 0;
-    if (rage::msg_dispatcher) {
-        uintptr_t ptr = rage::msg_dispatcher;
-        if (ptr && ptr >= 0x10000 && ptr < 0x7FFFFFFFFFFF)
-            rcx = *reinterpret_cast<uintptr_t*>(ptr);
-    }
-    if (!rcx) {
-        log::debug("[SLIDERS] ApplySliders: msg_dispatcher deref null\r\n");
+    rage::dispatch_fn_t fn = nullptr;
+    if (!rage::get_dispatch(rcx, fn)) {
+        log::debug("[SLIDERS] ApplySliders: dispatch not ready\r\n");
         return;
     }
 
@@ -283,11 +274,6 @@ void sliders::ApplySliders()
         b[0x738 + 2 * idx] = 0x32;
     }
 
-    typedef void(__fastcall* dispatch_fn_t)(
-        uint64_t rcx, uint64_t* rdx, uint64_t* r8, void* r9,
-        int param1, char param2, unsigned char param3);
-
-    auto fn = reinterpret_cast<dispatch_fn_t>(rage::dispatch_vfunc);
     uint64_t opcode = 0x5EE6BB89;
 
     hook::g_allow_attack_send = true;

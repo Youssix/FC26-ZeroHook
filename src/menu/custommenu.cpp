@@ -377,7 +377,7 @@ bool Menu::BeginWindow(const char* title, float minW, float minH) {
 	DrawRect(m_windowX, m_windowY, m_windowW, 2, Colors::Primary);
 
 	// Title text in content area header
-	DrawText(m_windowX + SIDEBAR_WIDTH + PADDING, m_windowY + titleBarH / 2 - 6, "Ring-1 Menu", Colors::TextDisabled);
+	DrawText(m_windowX + SIDEBAR_WIDTH + PADDING, m_windowY + titleBarH / 2 - 6, "ZeroHook Menu", Colors::TextDisabled);
 
 	// Close button (top right)
 	float closeSize = 22;

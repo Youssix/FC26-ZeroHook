@@ -6,7 +6,17 @@ namespace rage
     // Pattern-scanned pointers (resolved in offsets::Init)
     extern uintptr_t slider_ptr;
     extern uintptr_t msg_dispatcher;
-    extern uintptr_t dispatch_vfunc;
+
+    // Frostbite dispatcher signature: vtable[9] of message dispatcher object.
+    //   ((void(*)(this, opcode_a, opcode_b, payload, size, flag1, flag2))fn)(rcx, ...)
+    typedef void(__fastcall* dispatch_fn_t)(
+        uint64_t rcx, uint64_t* rdx, uint64_t* r8, void* r9,
+        int param1, char param2, unsigned char param3);
+
+    // Resolves the dispatcher object + vtable[9] dynamically.
+    // Walks: msg_dispatcher → *wrapper → object → vtable → vtable[9]
+    // Returns true if both outRcx and outFn are valid.
+    bool get_dispatch(uintptr_t& outRcx, dispatch_fn_t& outFn);
 
     // Initialize rage offsets — call after offsets::GameBase is set
     bool InitOffsets(void* gameBase, unsigned long gameSize);
