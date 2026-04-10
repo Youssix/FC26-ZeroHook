@@ -19,6 +19,7 @@ namespace opp_info
 {
     PlayerData g_opponent = {};
     bool       g_showWindow = true;
+    bool       g_enableStats = false;  // OFF by default — calling game funcs during 0x75AD corrupts state for some users
 }
 
 namespace
@@ -133,7 +134,12 @@ namespace
 
             typedef __int64(__fastcall* FnType)(uint64_t, uint32_t);
             auto fn = reinterpret_cast<FnType>(fnAddr);
+
+            fmt::snprintf(buf, sizeof(buf), "[OPP] getMatchType: CALL1 fn=%p rcx=%p edx=0x0EBDBBE3\r\n", (void*)fnAddr, (void*)basePtr);
+            log::to_file(buf);
             __int64 v3 = spoof_call(fn, (uint64_t)basePtr, (uint32_t)0x0EBDBBE3);
+            fmt::snprintf(buf, sizeof(buf), "[OPP] getMatchType: CALL1 returned v3=%p\r\n", (void*)v3);
+            log::to_file(buf);
             if (!is_valid_ptr((uintptr_t)v3)) { log::to_file("[OPP] BAIL getMatchType: v3 bad\r\n"); return -1; }
 
             uint64_t v3_vtbl = *(uint64_t*)v3;
@@ -143,7 +149,11 @@ namespace
             if (!is_valid_ptr(fnAddr2)) { log::to_file("[OPP] BAIL getMatchType: fnAddr2 bad\r\n"); return -1; }
 
             auto call2 = reinterpret_cast<FnType>(fnAddr2);
+            fmt::snprintf(buf, sizeof(buf), "[OPP] getMatchType: CALL2 fn=%p rcx=%p edx=0x0EBDBBE4\r\n", (void*)fnAddr2, (void*)v3);
+            log::to_file(buf);
             __int64 v4 = spoof_call(call2, (uint64_t)v3, (uint32_t)0x0EBDBBE4);
+            fmt::snprintf(buf, sizeof(buf), "[OPP] getMatchType: CALL2 returned v4=%p\r\n", (void*)v4);
+            log::to_file(buf);
             if (!is_valid_ptr((uintptr_t)v4)) { log::to_file("[OPP] BAIL getMatchType: v4 bad\r\n"); return -1; }
 
             uint64_t v4_vtbl = *(uint64_t*)v4;
@@ -154,19 +164,34 @@ namespace
             uint64_t fnAddr3 = *(uint64_t*)(v4_vtbl + vtOff);
             if (!is_valid_ptr(fnAddr3)) { log::to_file("[OPP] BAIL getMatchType: fnAddr3 bad\r\n"); return -1; }
 
-            fmt::snprintf(buf, sizeof(buf), "[OPP] getMatchType: calling v4_vtbl+0x%X at %p\r\n",
-                vtOff, (void*)fnAddr3);
-            log::debug(buf);
-
-            // Signature: fn3(rcx=this, edx=magic, r8=&result)
             typedef __int64(__fastcall* Fn3Type)(uint64_t, uint32_t, unsigned int*);
             auto fn3 = reinterpret_cast<Fn3Type>(fnAddr3);
 
             unsigned int result = 0;
+            fmt::snprintf(buf, sizeof(buf), "[OPP] getMatchType: CALL3 fn=%p rcx=%p edx=0x%X r8=&result\r\n",
+                (void*)fnAddr3, (void*)v4, g_matchTypeMagic);
+            log::to_file(buf);
             spoof_call(fn3, (uint64_t)v4, (uint32_t)g_matchTypeMagic, &result);
+            fmt::snprintf(buf, sizeof(buf), "[OPP] getMatchType: CALL3 returned, result=%d (0x%X)\r\n", result, result);
+            log::to_file(buf);
 
-            fmt::snprintf(buf, sizeof(buf), "[OPP] getMatchType: result=%d (0x%X)\r\n", result, result);
-            log::debug(buf);
+            // Release v4 only if it's a NEW object (v4 != v3).
+            // When vtable+0x18 returns the same ptr, no AddRef was done — releasing would over-decrement.
+            if (v4 != v3) {
+                uint64_t relFn = *(uint64_t*)(v4_vtbl + 0x8);
+                if (is_valid_ptr(relFn)) {
+                    typedef void(__fastcall* ReleaseFn)(__int64);
+                    fmt::snprintf(buf, sizeof(buf), "[OPP] getMatchType: RELEASE fn=%p rcx=%p (v4!=v3)\r\n", (void*)relFn, (void*)v4);
+                    log::to_file(buf);
+                    spoof_call(reinterpret_cast<ReleaseFn>(relFn), (__int64)v4);
+                    log::to_file("[OPP] getMatchType: RELEASE done\r\n");
+                }
+            } else {
+                log::to_file("[OPP] getMatchType: SKIP release (v4==v3, no AddRef)\r\n");
+            }
+
+            fmt::snprintf(buf, sizeof(buf), "[OPP] getMatchType: DONE result=%d (0x%X)\r\n", result, result);
+            log::to_file(buf);
 
             return (int)result;
         }
@@ -247,30 +272,42 @@ namespace
 
             typedef __int64(__fastcall* FnType)(uint64_t, uint32_t);
             auto fn = reinterpret_cast<FnType>(fnAddr);
+
+            fmt::snprintf(buf, sizeof(buf), "[OPP] extract_stats: CALL1 fn=%p rcx=%p edx=0x1C3E87C8\r\n", (void*)fnAddr, (void*)basePtr);
+            log::to_file(buf);
             __int64 v3 = spoof_call(fn, (uint64_t)basePtr, (uint32_t)0x1C3E87C8);
-            if (!is_valid_ptr((uintptr_t)v3)) return;
+            fmt::snprintf(buf, sizeof(buf), "[OPP] extract_stats: CALL1 returned v3=%p\r\n", (void*)v3);
+            log::to_file(buf);
+            if (!is_valid_ptr((uintptr_t)v3)) { log::to_file("[OPP] BAIL extract_stats: v3 bad\r\n"); return; }
 
             uint64_t v3_vtbl = *(uint64_t*)v3;
-            if (!is_valid_ptr(v3_vtbl + 0x18)) return;
+            if (!is_valid_ptr(v3_vtbl + 0x18)) { log::to_file("[OPP] BAIL extract_stats: v3_vtbl bad\r\n"); return; }
 
             uint64_t fnAddr2 = *(uint64_t*)(v3_vtbl + 0x18);
-            if (!is_valid_ptr(fnAddr2)) return;
+            if (!is_valid_ptr(fnAddr2)) { log::to_file("[OPP] BAIL extract_stats: fnAddr2 bad\r\n"); return; }
 
             auto call2 = reinterpret_cast<FnType>(fnAddr2);
+            fmt::snprintf(buf, sizeof(buf), "[OPP] extract_stats: CALL2 fn=%p rcx=%p edx=0x1C3E87C9\r\n", (void*)fnAddr2, (void*)v3);
+            log::to_file(buf);
             __int64 v4 = spoof_call(call2, (uint64_t)v3, (uint32_t)0x1C3E87C9);
-            if (!is_valid_ptr((uintptr_t)v4)) return;
+            fmt::snprintf(buf, sizeof(buf), "[OPP] extract_stats: CALL2 returned v4=%p\r\n", (void*)v4);
+            log::to_file(buf);
+            if (!is_valid_ptr((uintptr_t)v4)) { log::to_file("[OPP] BAIL extract_stats: v4 bad\r\n"); return; }
 
-            if (!is_valid_ptr((uintptr_t)v4)) return;
             uint64_t v4_vtbl = *(uint64_t*)v4;
-            if (!is_valid_ptr(v4_vtbl + 0x190)) return;
+            if (!is_valid_ptr(v4_vtbl + 0x190)) { log::to_file("[OPP] BAIL extract_stats: v4_vtbl bad\r\n"); return; }
 
             uint64_t fnAddr3 = *(uint64_t*)(v4_vtbl + 0x190);
-            if (!is_valid_ptr(fnAddr3)) return;
+            if (!is_valid_ptr(fnAddr3)) { log::to_file("[OPP] BAIL extract_stats: fnAddr3 bad\r\n"); return; }
 
             typedef __int64(__fastcall* Fn3Type)(uint64_t);
             auto call3 = reinterpret_cast<Fn3Type>(fnAddr3);
+            fmt::snprintf(buf, sizeof(buf), "[OPP] extract_stats: CALL3 fn=%p rcx=%p\r\n", (void*)fnAddr3, (void*)v4);
+            log::to_file(buf);
             __int64 finalResult = spoof_call(call3, (uint64_t)v4);
-            if (!is_valid_ptr((uintptr_t)finalResult)) return;
+            fmt::snprintf(buf, sizeof(buf), "[OPP] extract_stats: CALL3 returned finalResult=%p\r\n", (void*)finalResult);
+            log::to_file(buf);
+            if (!is_valid_ptr((uintptr_t)finalResult)) { log::to_file("[OPP] BAIL extract_stats: finalResult bad\r\n"); return; }
 
             auto pWords = reinterpret_cast<uint32_t*>(finalResult);
 
@@ -298,20 +335,21 @@ namespace
                 opp_info::g_opponent.teamOvr, opp_info::g_opponent.skillRating,
                 opp_info::g_opponent.seasonWins, opp_info::g_opponent.seasonLosses,
                 opp_info::g_opponent.seasonTies, opp_info::g_opponent.dnfPercent);
-            log::debug(buf);
+            log::to_file(buf);
 
             // ── Season info (creation date) ─────────────────────────
             if (g_seasonInfoFn) {
                 auto v31 = pWords[0x0E];
                 char v11[64] = {};
 
-                fmt::snprintf(buf, sizeof(buf), "[OPP] Calling getSeasonInfo(0x%X) at %p\r\n",
-                    v31, (void*)g_seasonInfoFn);
-                log::debug(buf);
+                fmt::snprintf(buf, sizeof(buf), "[OPP] extract_stats: CALL_SEASON fn=%p arg=0x%X\r\n",
+                    (void*)g_seasonInfoFn, v31);
+                log::to_file(buf);
 
                 typedef void(__fastcall* SeasonFn)(unsigned int, __int64);
                 auto seasonFn = reinterpret_cast<SeasonFn>(g_seasonInfoFn);
                 spoof_call(seasonFn, v31, reinterpret_cast<__int64>(v11));
+                log::to_file("[OPP] extract_stats: CALL_SEASON returned\r\n");
 
                 int month = *(int*)(v11 + 0x10);
                 unsigned int year = *(unsigned int*)(v11 + 0x14);
@@ -324,8 +362,24 @@ namespace
                 log::debug(buf);
             }
 
+            // Release v4 only if different from v3 (same ptr = no AddRef was done)
+            if (v4 != v3) {
+                uint64_t relFn = *(uint64_t*)(v4_vtbl + 0x8);
+                if (is_valid_ptr(relFn)) {
+                    typedef void(__fastcall* ReleaseFn)(__int64);
+                    fmt::snprintf(buf, sizeof(buf), "[OPP] extract_stats: RELEASE fn=%p rcx=%p (v4!=v3)\r\n", (void*)relFn, (void*)v4);
+                    log::to_file(buf);
+                    spoof_call(reinterpret_cast<ReleaseFn>(relFn), (__int64)v4);
+                    log::to_file("[OPP] extract_stats: RELEASE done\r\n");
+                }
+            } else {
+                log::to_file("[OPP] extract_stats: SKIP release (v4==v3, no AddRef)\r\n");
+            }
+
+            log::to_file("[OPP] extract_stats: DONE\r\n");
+
         } __except (1) {
-            log::debug("[OPP] extract_stats: EXCEPTION during stats extraction\r\n");
+            log::to_file("[OPP] extract_stats: EXCEPTION\r\n");
         }
     }
 
@@ -390,7 +444,7 @@ namespace
         log::debug(buf);
 
         if ((unsigned int)a2 != 0x75AD)
-            return 0; // not a match-found event, passthrough
+            return 0;
 
         log::debug("[OPP] >>> MATCH FOUND (a2=0x75AD) <<<\r\n");
 
@@ -489,24 +543,26 @@ namespace
             log::debug("[OPP] EXCEPTION during opponent info extraction\r\n");
         }
 
-        // ── Step 5: Match type check → extract stats ────────────────
-        int matchType = getMatchType();
-        {
-            const char* mtName = "Unknown";
-            if (matchType == 0x1B) mtName = "Classic Match";
-            else if (matchType == 0x1E) mtName = "FUT Champions";
-            else if (matchType == 0x22) mtName = "Division Rivals";
+        // ── Step 5: Match type + stats (toggleable — can crash for some users) ──
+        if (opp_info::g_enableStats) {
+            int matchType = getMatchType();
+            {
+                const char* mtName = "Unknown";
+                if (matchType == 0x1B) mtName = "Classic Match";
+                else if (matchType == 0x1E) mtName = "FUT Champions";
+                else if (matchType == 0x22) mtName = "Division Rivals";
 
-            char mtBuf[128];
-            fmt::snprintf(mtBuf, sizeof(mtBuf),
-                "[OPP] MatchType: %d (0x%X) = %s\r\n", matchType, matchType, mtName);
-            log::debug(mtBuf);
-        }
+                char mtBuf[128];
+                fmt::snprintf(mtBuf, sizeof(mtBuf),
+                    "[OPP] MatchType: %d (0x%X) = %s\r\n", matchType, matchType, mtName);
+                log::debug(mtBuf);
+            }
 
-        if (matchType == MT_FUTCHAMPS) {
-            log::debug("[OPP] FUT Champions — skipping stats (would overwrite basic info)\r\n");
-        } else {
-            extract_stats();
+            if (matchType == MT_FUTCHAMPS) {
+                log::debug("[OPP] FUT Champions — skipping stats\r\n");
+            } else {
+                extract_stats();
+            }
         }
 
         toast::Show(toast::Type::Info, opp_info::g_opponent.name[0]
@@ -723,21 +779,10 @@ bool opp_info::InstallHook()
         toast::Show(toast::Type::Error, "Opponent Info hook failed");
     }
 
-    // Install IDK hook (creation date for FUT Champs)
-    if (g_idkTargetFunc && !g_idkHooked) {
-        log::debug("[OPP] Installing EPT hook on idk vtable[372]...\r\n");
-
-        bool idkOk = ept::install_hook(g_idkHookParams,
-            reinterpret_cast<unsigned char*>(g_idkTargetFunc),
-            (void*)&IdkHookDetour, "IdkCreationDate");
-
-        if (idkOk) {
-            g_idkHooked = true;
-            log::debug("[OPP] IDK hook installed (creation date for all match types)\r\n");
-        } else {
-            log::debug("[OPP] WARNING: IDK hook install failed (FUT Champs creation date unavailable)\r\n");
-        }
-    }
+    // IDK hook (creation date) DISABLED — the function was rewritten in the
+    // latest update (iterates array + vtable calls instead of simple offset read).
+    // The spoof_call to GetSeasonInfo with garbage v13 values crashes for some users.
+    // Creation date still works for Rivals/Classic via extract_stats path (when re-enabled).
 
     return ok;
 }

@@ -35,6 +35,7 @@ namespace opp_info
 
     extern PlayerData g_opponent;
     extern bool       g_showWindow;
+    extern bool       g_enableStats;    // enable extended stats extraction (can crash for some users)
 
     // ── Lifecycle ───────────────────────────────────────────────────
     bool Init(void* gameBase, unsigned long gameSize);   // pattern scans

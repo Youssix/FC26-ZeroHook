@@ -349,6 +349,8 @@ void overlay::Frame(float screenW, float screenH)
                 {
                     CustomMenu::g_menu.StatusIndicator("Hook", true);
                     CustomMenu::g_menu.Toggle("Show Opponent Window", &opp_info::g_showWindow);
+                    CustomMenu::g_menu.Toggle("Extended Stats", &opp_info::g_enableStats,
+                        "DR, Chemistry, Creation Date (disable if game crashes on match search)");
                 }
                 CustomMenu::g_menu.EndSection();
             }
@@ -1091,59 +1093,71 @@ void overlay::Frame(float screenW, float screenH)
             }
             else
             {
+            // Snapshot the data to avoid race condition with detour thread
+            opp_info::PlayerData snap;
+            __movsb((unsigned char*)&snap, (const unsigned char*)&opp_info::g_opponent, sizeof(snap));
+
+            // Force null-termination on all strings (prevent runaway %s)
+            snap.name[sizeof(snap.name) - 1] = '\0';
+            snap.platform[sizeof(snap.platform) - 1] = '\0';
+            snap.clubName[sizeof(snap.clubName) - 1] = '\0';
+            snap.clubTag[sizeof(snap.clubTag) - 1] = '\0';
+
             char line[128];
 
-            CustomMenu::g_menu.LabelValue("Name", opp_info::g_opponent.name);
-            CustomMenu::g_menu.LabelValue("Platform", opp_info::g_opponent.platform);
+            CustomMenu::g_menu.LabelValue("Name", snap.name);
+            CustomMenu::g_menu.LabelValue("Platform", snap.platform);
 
-            if (opp_info::g_opponent.personaId) {
-                fmt::snprintf(line, sizeof(line), "%llu", opp_info::g_opponent.personaId);
+            if (snap.personaId) {
+                fmt::snprintf(line, sizeof(line), "%llu", snap.personaId);
                 CustomMenu::g_menu.LabelValue("Persona ID", line);
             }
 
-            if (opp_info::g_opponent.drRating) {
-                fmt::snprintf(line, sizeof(line), "%d", opp_info::g_opponent.drRating);
+            // Only show stats if they look sane (skip garbage values)
+            if (snap.drRating > 0 && snap.drRating <= 99) {
+                fmt::snprintf(line, sizeof(line), "%d", snap.drRating);
                 CustomMenu::g_menu.LabelValue("DR Rating", line);
             }
-            if (opp_info::g_opponent.chemistry) {
-                fmt::snprintf(line, sizeof(line), "%d/33", opp_info::g_opponent.chemistry);
+            if (snap.chemistry > 0 && snap.chemistry <= 33) {
+                fmt::snprintf(line, sizeof(line), "%d/33", snap.chemistry);
                 CustomMenu::g_menu.LabelValue("Chemistry", line);
             }
-            if (opp_info::g_opponent.teamOvr) {
-                fmt::snprintf(line, sizeof(line), "%d", opp_info::g_opponent.teamOvr);
+            if (snap.teamOvr > 0 && snap.teamOvr <= 99) {
+                fmt::snprintf(line, sizeof(line), "%d", snap.teamOvr);
                 CustomMenu::g_menu.LabelValue("Team OVR", line);
             }
-            if (opp_info::g_opponent.skillRating) {
-                fmt::snprintf(line, sizeof(line), "%d", opp_info::g_opponent.skillRating);
+            if (snap.skillRating > 0 && snap.skillRating < 10000) {
+                fmt::snprintf(line, sizeof(line), "%d", snap.skillRating);
                 CustomMenu::g_menu.LabelValue("Skill Rating", line);
             }
 
-            fmt::snprintf(line, sizeof(line), "%dW %dL %dD",
-                opp_info::g_opponent.seasonWins,
-                opp_info::g_opponent.seasonLosses,
-                opp_info::g_opponent.seasonTies);
-            CustomMenu::g_menu.LabelValue("Record", line);
+            if (snap.seasonWins >= 0 && snap.seasonWins < 10000
+                && snap.seasonLosses >= 0 && snap.seasonLosses < 10000
+                && snap.seasonTies >= 0 && snap.seasonTies < 10000) {
+                fmt::snprintf(line, sizeof(line), "%dW %dL %dD",
+                    snap.seasonWins, snap.seasonLosses, snap.seasonTies);
+                CustomMenu::g_menu.LabelValue("Record", line);
+            }
 
-            if (opp_info::g_opponent.dnfPercent) {
-                fmt::snprintf(line, sizeof(line), "%d%%", opp_info::g_opponent.dnfPercent);
+            if (snap.dnfPercent > 0 && snap.dnfPercent <= 100) {
+                fmt::snprintf(line, sizeof(line), "%d%%", snap.dnfPercent);
                 CustomMenu::g_menu.LabelValue("DNF", line);
             }
 
-            if (opp_info::g_opponent.creationYear > 0) {
+            if (snap.creationYear > 2000 && snap.creationYear < 2030
+                && snap.creationMonth >= 1 && snap.creationMonth <= 12) {
                 static const char* months[] = {
                     "?","Jan","Feb","Mar","Apr","May","Jun",
                     "Jul","Aug","Sep","Oct","Nov","Dec"
                 };
-                int mi = opp_info::g_opponent.creationMonth;
-                if (mi < 0 || mi > 12) mi = 0;
                 fmt::snprintf(line, sizeof(line), "%s %u",
-                    months[mi], opp_info::g_opponent.creationYear);
+                    months[snap.creationMonth], snap.creationYear);
                 CustomMenu::g_menu.LabelValue("Created", line);
             }
 
-            if (opp_info::g_opponent.clubName[0]) {
-                fmt::snprintf(line, sizeof(line), "%s [%s]",
-                    opp_info::g_opponent.clubName, opp_info::g_opponent.clubTag);
+            if (snap.clubName[0] && snap.clubName[0] > 0x20 && snap.clubName[0] < 0x7F) {
+                fmt::snprintf(line, sizeof(line), "%.30s [%.15s]",
+                    snap.clubName, snap.clubTag);
                 CustomMenu::g_menu.LabelValue("Club", line);
             }
             } // end if (valid)
