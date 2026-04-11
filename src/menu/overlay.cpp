@@ -1175,16 +1175,26 @@ void overlay::Frame(float screenW, float screenH)
             uintptr_t base = *(uintptr_t*)rage::slider_ptr;
             if (base)
             {
-                // Anti-AFK: reset timer to huge value
+                // Anti-AFK: max out OSDK idle detection thresholds
+                // Chain: slider -> +0x1080 -> +0x130 = OSDK match engine
+                // +0x4CA4 = OSDK_TRANSITION_TO_IDLE_TIME  (DWORD, ms)
+                // +0x4CA8 = OSDK_IDLE_DISCONNECT_TIME     (DWORD, ms)
+                // +0x4CAC = OSDK_MAX_IDLES_ALLOWED        (DWORD)
                 if (g_bypassAFK)
                 {
-                    uintptr_t p1 = *(uintptr_t*)(base + 0x1090);
+                    uintptr_t p1 = *(uintptr_t*)(base + 0x1080);
                     if (p1) {
                         uintptr_t p2 = *(uintptr_t*)(p1 + 0x130);
                         if (p2) {
-                            float* timer = (float*)(p2 + 0x4CA4);
-                            if (*timer != 1000000.0f)
-                                *timer = 1000000.0f;
+                            DWORD* transitionTime = (DWORD*)(p2 + 0x4CA4);
+                            DWORD* disconnectTime = (DWORD*)(p2 + 0x4CA8);
+                            DWORD* maxIdles       = (DWORD*)(p2 + 0x4CAC);
+                            if (*transitionTime != 0x7FFFFFFF)
+                                *transitionTime = 0x7FFFFFFF;
+                            if (*disconnectTime != 0x7FFFFFFF)
+                                *disconnectTime = 0x7FFFFFFF;
+                            if (*maxIdles != 0x7FFFFFFF)
+                                *maxIdles = 0x7FFFFFFF;
                         }
                     }
                 }

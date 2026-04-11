@@ -59,7 +59,10 @@ namespace
         unsigned int op3 = *a3;
 
         // ── Alt Tab bypass ──────────────────────────────────────────
-        if (hook::g_bypass_alt_tab && op2 == 0x6D0D4E53) return 0;
+        if (hook::g_bypass_alt_tab && op2 == 0x6D0D4E53) {
+            ((ept::register_context_t*)ctx)->rax = 0;
+            return 1;
+        }
 
         // ── Crash protection ──────────────────────────────────────────
 
