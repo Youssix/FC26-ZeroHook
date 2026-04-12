@@ -33,9 +33,16 @@ namespace offsets
     extern uintptr_t GameDispatchVTable;
     extern void*     FnRouteGameMessage;
 
+    // Alt-Tab sender (SystemOnAltTabMessage dispatch)
+    extern void*     FnAltTabSender;
+
     // PlayerSide (vtable[0xD]) — VTable hook, not EPT (target is VMProtect'd)
     extern uintptr_t PlayerSideVTable;
     extern void*     FnPlayerSide;
+
+    // MatchTimer (vtable[1]) — hooked to detect kickoff for AI Difficulty
+    extern uintptr_t MatchTimerVTable;
+    extern void*     FnMatchTimer;
 
     // Resolve everything — call once from DllMain before hooks
     bool Init();

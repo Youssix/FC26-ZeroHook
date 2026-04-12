@@ -696,6 +696,10 @@ bool Menu::SliderFloat(const char* label, float* value, float minVal, float maxV
 			if (newT < 0) newT = 0;
 			if (newT > 1) newT = 1;
 			float newVal = minVal + newT * (maxVal - minVal);
+			// Snap to integer when the display format is integer-only ("%.0f")
+			if (format && format[0] == '%' && format[1] == '.' && format[2] == '0' && format[3] == 'f') {
+				newVal = (float)(int)(newVal + (newVal >= 0 ? 0.5f : -0.5f));
+			}
 			if (newVal != *value) {
 				*value = newVal;
 				changed = true;

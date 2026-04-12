@@ -2,6 +2,7 @@
 #include "ept_hook.h"
 #include "../offsets/offsets.h"
 #include "../features/sliders.h"
+#include "../features/ai_difficulty.h"
 #include "../menu/toast.h"
 #include "../log/log.h"
 #include "../log/fmt.h"
@@ -13,6 +14,11 @@ volatile bool hook::g_bypass_alt_tab = false;
 namespace
 {
     __declspec(align(4096)) ept::ept_hook_install_params_t g_netHookParams = {};
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_altTabHookParams = {};
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_matchTimerHookParams = {};
+
+    // MatchTimer state — tracks previous frame's match clock to detect kickoff transition
+    volatile float g_matchPrevTime = 0.0f;
 
     // ===== PlayerSide hook (EPT tiny patch on thunk) =====
     // Target is VMProtect'd — full 234-byte EPT stub corrupts computed jump targets.
@@ -36,6 +42,19 @@ namespace
         return g_originalPlayerSide(a1, a2, a3);
     }
 
+    // ===== AltTabSender detour (block SystemOnAltTabMessage) =====
+    // sub_145680200: no args, returns __int64
+    // When bypass is on → skip original, return 0
+    // When bypass is off → pass through to original
+    extern "C" unsigned long long HookedAltTabSender(void* ctx)
+    {
+        if (hook::g_bypass_alt_tab) {
+            ((ept::register_context_t*)ctx)->rax = 0;
+            return 1;  // skip original
+        }
+        return 0;  // pass through
+    }
+
     // ===== RouteGameMessage detour (crash/freeze protection) =====
     // EPT hook on vtable[9] of GameDispatchVTable.
     // return 1 + ctx->rax=0 = block (skip original, return 0)
@@ -57,12 +76,6 @@ namespace
 
         unsigned int op2 = *a2;
         unsigned int op3 = *a3;
-
-        // ── Alt Tab bypass ──────────────────────────────────────────
-        if (hook::g_bypass_alt_tab && op2 == 0x6D0D4E53) {
-            ((ept::register_context_t*)ctx)->rax = 0;
-            return 1;
-        }
 
         // ── Crash protection ──────────────────────────────────────────
 
@@ -178,6 +191,78 @@ void hook::install_network_hooks()
     {
         log::debug("[ZeroHook] WARNING: RouteGameMessage not found, protection disabled\r\n");
     }
+}
+
+void hook::install_alttab_hook()
+{
+    if (offsets::FnAltTabSender)
+    {
+        ept::install_hook(g_altTabHookParams,
+            (unsigned char*)offsets::FnAltTabSender,
+            (void*)&HookedAltTabSender, "AltTabSender");
+        log::debug("[ZeroHook] AltTabSender hooked\r\n");
+    }
+    else
+    {
+        log::debug("[ZeroHook] WARNING: AltTabSender not found\r\n");
+    }
+}
+
+// ===== MatchTimer EPT detour =====
+// Hooks vtable[1] of the match timer object. Fires opcodes at kickoff
+// (prev_time <= 0 && current_time > 0). Always passes through to the original.
+//
+// Signature: __int64 __fastcall MatchTimer(__int64 a1, __int64 a2)
+//   a1 + 0xBC8  → pointer to timer instance
+//   instance + 0x24 (float) → current match time in seconds
+extern "C" unsigned long long HookedMatchTimer(
+    void* ctx,
+    unsigned long long a1,
+    unsigned long long /*a2*/)
+{
+    (void)ctx;
+
+    if (!a1) return 0;
+
+    __try {
+        uintptr_t instance = *reinterpret_cast<uintptr_t*>(a1 + 0xBC8);
+        if (!instance) return 0;
+
+        float current_time = *reinterpret_cast<float*>(instance + 0x24);
+        float prev_time    = g_matchPrevTime;
+
+        if (prev_time <= 0.0f && current_time > 0.0f)
+        {
+            // Kickoff frame — condition is inherently one-shot per match
+#ifndef STANDARD_BUILD
+            if (ai_difficulty::g_localLegendary)
+                ai_difficulty::send_local_legendary();
+            if (ai_difficulty::g_opponentBeginner)
+                ai_difficulty::send_opponent_beginner();
+#endif
+        }
+
+        g_matchPrevTime = current_time;
+    }
+    __except (1) {
+        // Swallow — never break the game's match timer
+    }
+
+    return 0;  // always pass through
+}
+
+void hook::install_match_timer_hook()
+{
+    if (!offsets::FnMatchTimer)
+    {
+        log::debug("[ZeroHook] WARNING: MatchTimer not found, AI difficulty trigger disabled\r\n");
+        return;
+    }
+
+    ept::install_hook(g_matchTimerHookParams,
+        (unsigned char*)offsets::FnMatchTimer,
+        (void*)&HookedMatchTimer, "MatchTimer");
+    log::debug("[ZeroHook] MatchTimer hooked (AI difficulty trigger)\r\n");
 }
 
 void hook::install_playerside_hook()

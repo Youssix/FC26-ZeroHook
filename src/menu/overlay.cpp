@@ -13,6 +13,7 @@
 #include "../features/division.h"
 #include "../features/champions.h"
 #include "../features/opponent_info.h"
+#include "../features/ai_difficulty.h"
 #include "../log/fmt.h"
 #include "../log/log.h"
 #include "../renderer/renderer.h"
@@ -359,6 +360,13 @@ void overlay::Frame(float screenW, float screenH)
             if (CustomMenu::g_menu.BeginSection("Match Utilities"))
             {
                 CustomMenu::g_menu.Toggle("Bypass Alt Tab", (bool*)&hook::g_bypass_alt_tab);
+                if (hook::g_bypass_alt_tab) {
+                    static bool s_altTabHooked = false;
+                    if (!s_altTabHooked) {
+                        hook::install_alttab_hook();
+                        s_altTabHooked = true;
+                    }
+                }
                 CustomMenu::g_menu.Toggle("Bypass AFK Detection", &g_bypassAFK);
                 CustomMenu::g_menu.Toggle("No Loss on Leave", &g_noLoss);
                 if (g_noLoss)
@@ -623,54 +631,54 @@ void overlay::Frame(float screenW, float screenH)
             // ── Section 3: Local Sliders ──
             if (CustomMenu::g_menu.BeginSection("Local Sliders"))
             {
-                CustomMenu::g_menu.SliderFloat("Acceleration##L",        &sliders::local_acceleration, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Sprint Speed##L",        &sliders::local_sprint, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Shoot Error##L",         &sliders::local_shoot_error, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Shoot Speed##L",         &sliders::local_shoot_speed, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Pass Error##L",          &sliders::local_pass_error, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Pass Speed##L",          &sliders::local_pass_speed, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("First Touch Error##L",   &sliders::local_first_touch_error, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Header Shot Error##L",   &sliders::local_header_shot_error, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Header Pass Error##L",   &sliders::local_header_pass_error, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Intercept Error##L",     &sliders::local_intercept_error, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Ball Deflection##L",     &sliders::local_ball_deflection, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Marking##L",             &sliders::local_position_marking, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Line Length##L",         &sliders::local_position_line_length, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Line Width##L",          &sliders::local_position_line_width, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Def. Line Height##L",    &sliders::local_position_defensive_line_height, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Run Frequency##L",       &sliders::local_position_run_frequency, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Fullback Pos##L",        &sliders::local_position_fullback, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("GK Ability##L",          &sliders::local_gk_ability, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Tackle Aggression##L",   &sliders::local_tackle_aggression, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Injury Severity##L",     &sliders::local_injury_severity, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Injury Frequency##L",    &sliders::local_injury_frequency, 1.0f, 99.0f);
+                CustomMenu::g_menu.SliderFloat("Acceleration##L",        &sliders::local_acceleration, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Sprint Speed##L",        &sliders::local_sprint, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Shoot Error##L",         &sliders::local_shoot_error, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Shoot Speed##L",         &sliders::local_shoot_speed, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Pass Error##L",          &sliders::local_pass_error, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Pass Speed##L",          &sliders::local_pass_speed, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("First Touch Error##L",   &sliders::local_first_touch_error, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Header Shot Error##L",   &sliders::local_header_shot_error, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Header Pass Error##L",   &sliders::local_header_pass_error, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Intercept Error##L",     &sliders::local_intercept_error, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Ball Deflection##L",     &sliders::local_ball_deflection, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Marking##L",             &sliders::local_position_marking, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Line Length##L",         &sliders::local_position_line_length, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Line Width##L",          &sliders::local_position_line_width, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Def. Line Height##L",    &sliders::local_position_defensive_line_height, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Run Frequency##L",       &sliders::local_position_run_frequency, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Fullback Pos##L",        &sliders::local_position_fullback, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("GK Ability##L",          &sliders::local_gk_ability, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Tackle Aggression##L",   &sliders::local_tackle_aggression, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Injury Severity##L",     &sliders::local_injury_severity, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Injury Frequency##L",    &sliders::local_injury_frequency, 1.0f, 99.0f, "%.0f");
                 CustomMenu::g_menu.EndSection();
             }
 
             // ── Section 4: Opponent Sliders ──
             if (CustomMenu::g_menu.BeginSection("Opponent Sliders"))
             {
-                CustomMenu::g_menu.SliderFloat("Acceleration##O",        &sliders::opp_acceleration, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Sprint Speed##O",        &sliders::opp_sprint, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Shoot Error##O",         &sliders::opp_shoot_error, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Shoot Speed##O",         &sliders::opp_shoot_speed, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Pass Error##O",          &sliders::opp_pass_error, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Pass Speed##O",          &sliders::opp_pass_speed, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("First Touch Error##O",   &sliders::opp_first_touch_error, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Header Shot Error##O",   &sliders::opp_header_shot_error, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Header Pass Error##O",   &sliders::opp_header_pass_error, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Intercept Error##O",     &sliders::opp_intercept_error, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Ball Deflection##O",     &sliders::opp_ball_deflection, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Marking##O",             &sliders::opp_position_marking, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Line Length##O",         &sliders::opp_position_line_length, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Line Width##O",          &sliders::opp_position_line_width, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Def. Line Height##O",    &sliders::opp_position_defensive_line_height, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Run Frequency##O",       &sliders::opp_position_run_frequency, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Fullback Pos##O",        &sliders::opp_position_fullback, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("GK Ability##O",          &sliders::opp_gk_ability, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Tackle Aggression##O",   &sliders::opp_tackle_aggression, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Injury Severity##O",     &sliders::opp_injury_severity, 1.0f, 99.0f);
-                CustomMenu::g_menu.SliderFloat("Injury Frequency##O",    &sliders::opp_injury_frequency, 1.0f, 99.0f);
+                CustomMenu::g_menu.SliderFloat("Acceleration##O",        &sliders::opp_acceleration, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Sprint Speed##O",        &sliders::opp_sprint, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Shoot Error##O",         &sliders::opp_shoot_error, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Shoot Speed##O",         &sliders::opp_shoot_speed, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Pass Error##O",          &sliders::opp_pass_error, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Pass Speed##O",          &sliders::opp_pass_speed, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("First Touch Error##O",   &sliders::opp_first_touch_error, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Header Shot Error##O",   &sliders::opp_header_shot_error, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Header Pass Error##O",   &sliders::opp_header_pass_error, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Intercept Error##O",     &sliders::opp_intercept_error, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Ball Deflection##O",     &sliders::opp_ball_deflection, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Marking##O",             &sliders::opp_position_marking, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Line Length##O",         &sliders::opp_position_line_length, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Line Width##O",          &sliders::opp_position_line_width, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Def. Line Height##O",    &sliders::opp_position_defensive_line_height, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Run Frequency##O",       &sliders::opp_position_run_frequency, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Fullback Pos##O",        &sliders::opp_position_fullback, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("GK Ability##O",          &sliders::opp_gk_ability, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Tackle Aggression##O",   &sliders::opp_tackle_aggression, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Injury Severity##O",     &sliders::opp_injury_severity, 1.0f, 99.0f, "%.0f");
+                CustomMenu::g_menu.SliderFloat("Injury Frequency##O",    &sliders::opp_injury_frequency, 1.0f, 99.0f, "%.0f");
                 CustomMenu::g_menu.EndSection();
             }
         }
@@ -825,11 +833,13 @@ void overlay::Frame(float screenW, float screenH)
 
             if (CustomMenu::g_menu.BeginSection("AI Difficulty"))
             {
-                static bool aiLocalLegendary = false;
-                static bool aiOpponentBeginner = false;
 #ifndef STANDARD_BUILD
-                CustomMenu::g_menu.Toggle("AI Local Legendary", &aiLocalLegendary);
-                CustomMenu::g_menu.Toggle("AI Opponent Beginner", &aiOpponentBeginner);
+                CustomMenu::g_menu.Toggle("AI Local Legendary",
+                    &ai_difficulty::g_localLegendary,
+                    "Sets your AI to legendary difficulty at kickoff");
+                CustomMenu::g_menu.Toggle("AI Opponent Beginner",
+                    &ai_difficulty::g_opponentBeginner,
+                    "Sets opponent AI to beginner difficulty at kickoff");
 #else
                 CustomMenu::g_menu.Label("AI Local Legendary", CustomMenu::Colors::TextDisabled);
                 CustomMenu::g_menu.Label("AI Opponent Beginner", CustomMenu::Colors::TextDisabled);

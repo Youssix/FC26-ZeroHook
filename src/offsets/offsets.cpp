@@ -22,8 +22,11 @@ void*         offsets::FnGetMouseDeltaY   = nullptr;
 void*         offsets::FnGetMouseScroll   = nullptr;
 uintptr_t     offsets::GameDispatchVTable = 0;
 void*         offsets::FnRouteGameMessage = nullptr;
+void*         offsets::FnAltTabSender     = nullptr;
 uintptr_t     offsets::PlayerSideVTable   = 0;
 void*         offsets::FnPlayerSide       = nullptr;
+uintptr_t     offsets::MatchTimerVTable   = 0;
+void*         offsets::FnMatchTimer       = nullptr;
 
 // ── Helpers ─────────────────────────────────────────────────────────
 namespace
@@ -184,6 +187,14 @@ bool offsets::Init()
         (void*)GameDispatchVTable, FnRouteGameMessage);
     log::debug(buf);
 
+    // ── 6b. AltTabSender (SystemOnAltTabMessage dispatch) ──────────
+    FnAltTabSender = game::pattern_scan(GameBase, GameSize,
+        "48 83 EC ? E8 ? ? ? ? 48 85 C0 74 ? 48 8D 0D");
+    fmt::snprintf(buf, sizeof(buf),
+        "[offsets] [6b] %s AltTabSender: %p\r\n",
+        FnAltTabSender ? "OK" : "FAIL", FnAltTabSender);
+    log::debug(buf);
+
     // ── 7. PlayerSide vtable (vtable[0xD]) ──────────────────────────
     log::debug("[offsets] [7/7] PlayerSide vtable pattern scan...\r\n");
     void* psMatch = game::pattern_scan(GameBase, GameSize,
@@ -206,6 +217,32 @@ bool offsets::Init()
         "[offsets] [7/7] %s PlayerSideVTable: %p  FnPlayerSide: %p\r\n",
         (PlayerSideVTable && FnPlayerSide) ? "OK" : "FAIL",
         (void*)PlayerSideVTable, FnPlayerSide);
+    log::debug(buf);
+
+    // ── 8. MatchTimer vtable (vtable[1]) ────────────────────────────
+    //   Pattern from FC26-Internal/features/offset.cpp:405 — a LEA RAX,[rip+match_time_vtable]
+    //   followed by object construction calls. Ported verbatim.
+    log::debug("[offsets] [8] MatchTimer vtable pattern scan...\r\n");
+    void* mtMatch = game::pattern_scan(GameBase, GameSize,
+        "48 8D 05 ? ? ? ? 49 8D 4E ? 49 89 06 E8 ? ? ? ? 48 8D 05 ? ? ? ? 33 ED 49 8D 4E ? 49 89 46 ? 49 89 6E ? E8 ? ? ? ? 48 8D 05 ? ? ? ? 49 89 6E");
+    if (mtMatch)
+    {
+        __try {
+            uintptr_t vtableAddr = resolve_rip((uintptr_t)mtMatch, 3, 7);
+            if (vtableAddr && is_canonical(vtableAddr))
+            {
+                MatchTimerVTable = vtableAddr;
+                void** vtable = (void**)vtableAddr;
+                FnMatchTimer = vtable[1];
+            }
+        } __except (1) {
+            log::debug("[offsets] [8] EXCEPTION resolving MatchTimer vtable\r\n");
+        }
+    }
+    fmt::snprintf(buf, sizeof(buf),
+        "[offsets] [8] %s MatchTimerVTable: %p  FnMatchTimer: %p\r\n",
+        (MatchTimerVTable && FnMatchTimer) ? "OK" : "FAIL",
+        (void*)MatchTimerVTable, FnMatchTimer);
     log::debug(buf);
 
     log::debug("[offsets] Init complete\r\n");
