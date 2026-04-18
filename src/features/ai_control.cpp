@@ -1,0 +1,311 @@
+// ai_control.cpp — AI vs Opps / Disable Opponent AI
+//
+// AI takeover, clean:
+//   1. LOCAL: write primary_array[field_slot].field0 = 0xFFFFFFFF
+//      → the game's input processor sees "AI marker" for this slot, stops
+//        reading user input, and hands the slot to the native AI code.
+//   2. PEER: dispatch opcode 0xA2CB726E {0xFFFFFFFF, field_slot, 1}
+//      slot=0xFF, param7=0 — the peer writes the same AI marker into its
+//      primary array → both sides in sync → no DataMismatch DC.
+//
+// No AFK machinery. No sub_1427F7640. No mode spoofing. No state-machine
+// tricks. This is a plain controller reassignment, structurally identical
+// to the "human-subbed-for-AI" events the game already produces during
+// normal mid-match controller transitions.
+//
+// Field slot resolution (via game's own table, not sub_142329490):
+//   alt       = match_ctx[+8]
+//   idx       = *(match_ctx + (alt ? 0x4930 : 0x23D0))
+//   token     = *(match_ctx + (alt ? 0x4938 : 0x23D8) + 16*idx)
+//   The token IS the field slot for the human player on our side. Verified
+//   via live bridge reads (token=4 while human was physically at field slot
+//   4 per the kickoff broadcast packet [controller=0, field_slot=4, 1]).
+//
+// NoCRT-safe.
+
+#include "ai_control.h"
+
+#include <Windows.h>
+#include "../offsets/offsets.h"
+#include "../hook/network_hooks.h"
+#include "sliders.h"
+#include "rage.h"
+#include "../spoof/spoof_call.hpp"
+#include "../log/log.h"
+#include "../log/fmt.h"
+#include "../menu/toast.h"
+
+// Kept for compatibility with the RouteGameMessage capture code.
+volatile uint32_t ai_control::g_ourPlayerId      = 0;
+volatile bool     ai_control::g_playerIdCaptured = false;
+volatile bool     ai_control::g_kickoffArmed     = false;
+volatile bool     ai_control::g_aiTakeoverFired  = false;
+
+void ai_control::ResetCapture()
+{
+    g_playerIdCaptured = false;
+    g_ourPlayerId      = 0;
+    g_aiTakeoverFired  = false;
+}
+
+void ai_control::OnIncomingControlOpcode(uint32_t team, uint32_t player)
+{
+    if (g_playerIdCaptured) return;
+    // Ignore sentinel broadcast rows (Team=0xFFFFFFFF) — these fire for all
+    // 22 squad positions during pre-match lineup distribution and would
+    // poison ourPlayerId. We only want the per-team captain-init packet
+    // (Team=0 or Team=1 matching playerside).
+    if (team == 0xFFFFFFFFu) return;
+    if (team != (uint32_t)sliders::playerside) return;
+    g_ourPlayerId      = player;
+    g_playerIdCaptured = true;
+
+    char buf[128];
+    fmt::snprintf(buf, sizeof(buf),
+        "[AI] captured ourPlayerId=%u (team=%u, playerside=%d)\r\n",
+        player, team, sliders::playerside);
+    log::debug(buf);
+}
+
+namespace
+{
+    uintptr_t GetMatchCtx()
+    {
+        if (!offsets::FnGetMatchCtx) return 0;
+        typedef uintptr_t(__fastcall* get_ctx_fn)();
+        get_ctx_fn fn = reinterpret_cast<get_ctx_fn>(offsets::FnGetMatchCtx);
+        uintptr_t ctx = 0;
+        __try { ctx = fn(); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { ctx = 0; }
+        return ctx;
+    }
+
+    // Field slot of our local human on the pitch (0..21).
+    uint32_t ResolveLocalFieldSlot(uintptr_t match_ctx)
+    {
+        uint32_t slot = 0xFFFFFFFF;
+        __try {
+            uint8_t   alt     = *reinterpret_cast<uint8_t*>(match_ctx + 8);
+            uintptr_t idxOff  = alt ? 0x4930 : 0x23D0;
+            uintptr_t tblBase = alt ? 0x4938 : 0x23D8;
+            uint32_t active_idx = *reinterpret_cast<uint32_t*>(match_ctx + idxOff);
+            slot = *reinterpret_cast<uint32_t*>(
+                match_ctx + tblBase + 16ULL * (uintptr_t)active_idx);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        return slot;
+    }
+
+    // Only mutate / send while gameplay is actually live. Avoids forfeit
+    // during loading / menu / cutscenes.
+    bool IsInActiveGameplay(uintptr_t ctx)
+    {
+        if (!ctx) return false;
+        __try {
+            uint8_t active = *reinterpret_cast<uint8_t*>(ctx + 0x4AD0);
+            return active != 0;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
+    // Primary / secondary 22-slot array base. Each slot is 0x1A0 bytes.
+    uintptr_t SlotArrayBase(uintptr_t ctx)
+    {
+        uint8_t alt = 0;
+        __try { alt = *reinterpret_cast<uint8_t*>(ctx + 8); }
+        __except (EXCEPTION_EXECUTE_HANDLER) {}
+        return ctx + (alt ? 0x2570 : 0x10);
+    }
+
+    // Write the AI marker into the slot's controller field (controllerIndex at +0x8).
+    bool WriteLocalAiMarker(uintptr_t ctx, uint32_t field_slot, uint32_t& savedCtrlId)
+    {
+        if (field_slot > 21) return false;
+        __try {
+            uintptr_t slotAddr = SlotArrayBase(ctx) + 0x1A0ULL * field_slot;
+            uint32_t* pCtrlId  = reinterpret_cast<uint32_t*>(slotAddr + 0x8);
+            savedCtrlId = *pCtrlId;
+            *pCtrlId = 0xFFFFFFFF;
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
+    // Recipe C sweep: 22-slot broadcast. Currently DORMANT — ApplyAiTakeoverFor
+    // uses local-only path. Kept for reference / Step 3 fallback if local write
+    // alone is insufficient.
+    //
+    // buf[2] = 0 (NOT 1). Noor's IDA analysis of sub_14281B970 + sub_14282B1D0
+    // confirmed buf[2] is the team index field, not a server-auth flag. Sending
+    // buf[2]=1 on a home-team (team=0) match corrupts the team assignment,
+    // which triggers the server's team-balance watchdog → forced DC.
+    //   For each slot 0..21:
+    //     buf = { 0xFFFFFFFF, slot, 0x00000000 }
+    //     size=12, slot_arg=0xFF, param7=0
+    bool BroadcastFullAiSweep(int& sent_count)
+    {
+        sent_count = 0;
+        uintptr_t rcx = 0; rage::dispatch_fn_t fn = nullptr;
+        if (!rage::get_dispatch(rcx, fn)) return false;
+
+        uint64_t opcode = 0xA2CB726E;
+
+        hook::g_allow_attack_send = true;
+        for (uint32_t slot = 0; slot < 22; ++slot) {
+            uint32_t buffer[3] = { 0xFFFFFFFF, slot, 0x00000000 };
+            __try {
+                spoof_call(fn, (uint64_t)rcx,
+                           (uint64_t*)&opcode, (uint64_t*)&opcode,
+                           (void*)buffer, (int)12, (char)0xFF, (unsigned char)0);
+                ++sent_count;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                // Keep going — partial sweep still better than nothing.
+            }
+        }
+        hook::g_allow_attack_send = false;
+        return sent_count > 0;
+    }
+
+    bool ApplyAiTakeoverFor(uintptr_t ctx, uint32_t field_slot, const char* label)
+    {
+        // STRATEGY PIVOT: drop the broadcast entirely. Every broadcast-based
+        // approach (single-slot + full sweep, with or without state-sync)
+        // causes peer-side rejection → DataMismatch or "lost connection" DC.
+        //
+        // This branch writes ONLY the local slot's controller_id to 0xFFFFFFFF
+        // (AI marker) and sends NOTHING over the wire. The game's input
+        // dispatcher reads slot+0x00 each frame; once it sees 0xFFFFFFFF, it
+        // routes our slot to the built-in AI driver. From the peer's view,
+        // our physics broadcasts (0x90F87271) continue unchanged — they just
+        // carry AI-driven positions. Diego's analysis confirmed the peer
+        // stores raw positions without prediction, so hash stays consistent.
+        //
+        // If this still DCs, the peer-side timeout is the issue (they expect
+        // certain packets we're no longer sending), or Javelin detected the
+        // local write itself. Both are investigation hooks for next iteration.
+        uint32_t prevCtrl = 0;
+        bool localOk = WriteLocalAiMarker(ctx, field_slot, prevCtrl);
+
+        char buf[192];
+        fmt::snprintf(buf, sizeof(buf),
+            "[AI] %s field_slot=%u prevCtrl=%08X localOk=%d (LOCAL-ONLY, no broadcast)\r\n",
+            label, field_slot, prevCtrl, localOk ? 1 : 0);
+        log::debug(buf);
+        return localOk;
+    }
+
+    // Resolve our team_token via the game's per-round table.
+    //   match_ctx[+8]       = alt/side flag (0=primary path, 1=secondary)
+    //   match_ctx[+0x23D0]  (home) / +0x4930 (away) = DWORD index into the
+    //                         team-token table
+    //   match_ctx[+0x23D8]  (home) / +0x4938 (away) = base of 16B-stride
+    //                         table; [baseIdx*16 + 0] holds the team_token
+    // FnAiSlotResolver(match_ctx, team_token) returns the field slot index
+    // [0..21] of our captain. Single slot. No stride.
+    bool ResolveOurCaptainSlot(uintptr_t match_ctx, uint32_t& out_slot, uint32_t& out_token)
+    {
+        out_slot  = 0xFFFFFFFFu;
+        out_token = 0xFFFFFFFFu;
+        if (!offsets::FnAiSlotResolver) return false;
+        __try {
+            uint8_t   alt     = *reinterpret_cast<uint8_t*>(match_ctx + 8);
+            uintptr_t idxOff  = alt ? 0x4930 : 0x23D0;
+            uintptr_t tblBase = alt ? 0x4938 : 0x23D8;
+            uint32_t  headIdx = *reinterpret_cast<uint32_t*>(match_ctx + idxOff);
+            out_token = *reinterpret_cast<uint32_t*>(
+                match_ctx + tblBase + 16ULL * (uintptr_t)headIdx);
+        } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+
+        if (out_token == 0xFFFFFFFFu) return false;
+
+        typedef uint32_t(__fastcall* slot_resolver_fn)(uintptr_t, uint32_t);
+        slot_resolver_fn fn = reinterpret_cast<slot_resolver_fn>(offsets::FnAiSlotResolver);
+        uint32_t s = 0xFFFFFFFFu;
+        __try { s = fn(match_ctx, out_token); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        if (s > 21u) return false;
+        out_slot = s;
+        return true;
+    }
+
+    // AI takeover, single-slot + paired state-sync. This is what the cheat
+    // actually does (confirmed via IDA + log diff against 3 cheat logs):
+    //   1. Write slot[captain].controller_id = 0xFFFFFFFF
+    //   2. Call FnAiStateSync(ctx, captain_slot, 0) — emits the paired
+    //      0x4E9507C9 (0x290-byte state snapshot) so peer's hash check
+    //      accepts the flip.
+    // NO stride sweep. Writing OPP slots triggers the game's dispatcher to
+    // rebroadcast 0xA2CB726E for those players with Buf[2]=0x00000001 (the
+    // "human takeover" flag), which the peer flags as DataMismatch on
+    // opponent squad (verified against try_2 log: 115 such packets at
+    // RetAddr 0x14566B349, zero in all 3 cheat logs).
+    bool ApplyAiTakeoverCaptain(uintptr_t ctx, const char* label)
+    {
+        uint32_t captain_slot = 0xFFFFFFFFu, team_token = 0xFFFFFFFFu;
+        if (!ResolveOurCaptainSlot(ctx, captain_slot, team_token)) {
+            log::debug("[AI] captain resolve failed\r\n");
+            return false;
+        }
+
+        uint32_t prev = 0;
+        bool localOk = WriteLocalAiMarker(ctx, captain_slot, prev);
+
+        bool syncOk = false;
+        if (localOk && offsets::FnAiStateSync) {
+            typedef void(__fastcall* sync_fn)(uintptr_t, uint32_t, int);
+            sync_fn fn = reinterpret_cast<sync_fn>(offsets::FnAiStateSync);
+            __try {
+                hook::g_allow_attack_send = true;
+                spoof_call(fn, (uint64_t)ctx, (uint32_t)captain_slot, (int)0);
+                hook::g_allow_attack_send = false;
+                syncOk = true;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                hook::g_allow_attack_send = false;
+            }
+        }
+
+        char buf[192];
+        fmt::snprintf(buf, sizeof(buf),
+            "[AI] %s captain slot=%u token=%08X prev=%08X local=%d sync=%d\r\n",
+            label, captain_slot, team_token, prev,
+            localOk ? 1 : 0, syncOk ? 1 : 0);
+        log::debug(buf);
+
+        return localOk && syncOk;
+    }
+}
+
+bool ai_control::SendAiTakeover()
+{
+    // One-shot latch: the AI-takeover is a single captain-slot write plus one
+    // paired state-sync. Repeating the write retriggers the dispatcher to
+    // rebroadcast 0xA2CB726E with Buf[2]=0x00000001 ("human takeover" flag)
+    // for opponent players, which peer flags as DataMismatch on opp squad.
+    if (g_aiTakeoverFired) return false;
+
+    // Kickoff gate — MatchTimer arms it at the prev<=0/cur>0 transition
+    // (no 3-second dwell anymore; cheat fires inside the +0..+2s window).
+    if (!g_kickoffArmed) return false;
+
+    uintptr_t ctx = GetMatchCtx();
+    if (!ctx || !IsInActiveGameplay(ctx)) return false;
+
+    if (!ApplyAiTakeoverCaptain(ctx, "takeover-self")) {
+        toast::Show(toast::Type::Error, "AI: takeover failed");
+        return false;
+    }
+    g_aiTakeoverFired = true;
+    toast::Show(toast::Type::Success, "AI takeover armed");
+    return true;
+}
+
+bool ai_control::SendDisableOpponentAi()
+{
+    // Disabled for now. Writing to an opponent slot without hooking the
+    // peer's FnMismatchGate (impossible from our side) causes immediate
+    // DataMismatch from the peer's validator. See AI_VS_OPP_FIX.md.
+    // Menu toggle is still wired but does nothing until we have a safe
+    // approach (e.g., server-authoritative AFK-takeover packet replay).
+    return false;
+}

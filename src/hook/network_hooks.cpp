@@ -1,11 +1,15 @@
 #include "network_hooks.h"
 #include "ept_hook.h"
 #include "../offsets/offsets.h"
+#include "../game/game.h"
 #include "../features/sliders.h"
 #include "../features/ai_difficulty.h"
+#include "../features/ai_control.h"
+#include "../features/proclub.h"
 #include "../menu/toast.h"
 #include "../log/log.h"
 #include "../log/fmt.h"
+#include "../log/breadcrumb.h"
 
 // Bypass flag — true only while WE are sending an attack opcode
 volatile bool hook::g_allow_attack_send = false;
@@ -70,6 +74,114 @@ namespace
         int a7)
     {
         if (!a2 || !a3) return 0;
+
+        // Preserve the original RAX value so when we return 0 (pass through),
+        // the stub sees RAX != 0 and executes the original handler.
+        unsigned long long orig_rax = ((ept::register_context_t*)ctx)->rax;
+
+        // ── TEMP DIAGNOSTIC: opcode census for AI-takeover design ────
+        // Logs incoming opcodes with wall-clock timestamp + RetAddr + structured
+        // fields for 0xA2CB726E / 0x4E9507C9 + full hex dump for others.
+        //
+        // Filters out the top-4 high-frequency per-tick network-framing opcodes
+        // (94% of raw traffic — pure framing, never event-relevant):
+        //   0x5D4D4E4C — ball/score state
+        //   0x38789943 — match timer sync
+        //   0x90F87271 — player physics sync (20k+ hits per 2-min match)
+        //   0x8CD19B0C — heartbeat
+        //
+        // NOTE: 0xAFEF31A7 and 0xB95B9311 are also high-frequency but fire
+        // during active gameplay (gameplay sync), not as pure framing noise —
+        // keep them in the log in case they carry actionable event signals.
+        {
+            unsigned int op_noise = *a2;
+            bool is_noise =
+                (op_noise == 0x5D4D4E4C) ||
+                (op_noise == 0x38789943) ||
+                (op_noise == 0x90F87271) ||
+                (op_noise == 0x8CD19B0C);
+            if (is_noise) goto after_op_diag;
+
+            SYSTEMTIME st;
+            GetLocalTime(&st);
+
+            unsigned long long retAddr = 0;
+            __try {
+                unsigned long long rsp = ((ept::register_context_t*)ctx)->original_rsp;
+                if (rsp) retAddr = *(unsigned long long*)rsp;
+            } __except (1) {}
+
+            unsigned int op2_log = *a2;
+            unsigned int op3_log = *a3;
+
+            char lb[2048];  // Bigger for hex dump
+            int pos = 0;
+
+            // Header: timestamp + opcode identification
+            pos += fmt::snprintf(lb + pos, sizeof(lb) - pos,
+                "[%02d:%02d:%02d.%03d] ",
+                st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+
+            // Special-case 0xA2CB726E — structured fields (FC26-Internal log style)
+            if (op2_log == 0xA2CB726E || op3_log == 0xA2CB726E) {
+                auto bd = reinterpret_cast<unsigned int*>(a4);
+                unsigned int team   = (bd && a5 >= 4)  ? bd[0] : 0;
+                unsigned int player = (bd && a5 >= 8)  ? bd[1] : 0;
+                unsigned int b2     = (bd && a5 >= 12) ? bd[2] : 0;
+                pos += fmt::snprintf(lb + pos, sizeof(lb) - pos,
+                    "[Opcode 0xA2CB726E] Team=0x%08X Player=%u Slot=0x%02X Buf[2]=0x%08X Param7=%d RetAddr=%016llX\r\n",
+                    team, player, (unsigned char)a6, b2, a7, retAddr);
+            }
+            // Special-case 0x4E9507C9 — state-sync, large payload
+            else if (op2_log == 0x4E9507C9 || op3_log == 0x4E9507C9) {
+                pos += fmt::snprintf(lb + pos, sizeof(lb) - pos,
+                    "[Opcode 0x4E9507C9] sz=%d Slot=0x%02X Param7=%d RetAddr=%016llX (state-sync)\r\n",
+                    a5, (unsigned char)a6, a7, retAddr);
+            }
+            // Everything else: header + full hex dump (up to 128 bytes)
+            else {
+                pos += fmt::snprintf(lb + pos, sizeof(lb) - pos,
+                    "[Opcode 0x%08X] a3=0x%08X sz=%d Slot=0x%02X Param7=%d RetAddr=%016llX",
+                    op2_log, op3_log, a5, (unsigned char)a6, a7, retAddr);
+
+                if (a4 && a5 > 0) {
+                    int dump = a5 > 128 ? 128 : a5;
+                    pos += fmt::snprintf(lb + pos, sizeof(lb) - pos, " buf[%d]=", dump);
+                    unsigned char* bytes = (unsigned char*)a4;
+                    __try {
+                        for (int i = 0; i < dump && pos + 4 < (int)sizeof(lb); i++) {
+                            pos += fmt::snprintf(lb + pos, sizeof(lb) - pos,
+                                "%02X%s", bytes[i],
+                                ((i & 3) == 3 && i != dump - 1) ? " " : "");
+                        }
+                    } __except (1) {
+                        pos += fmt::snprintf(lb + pos, sizeof(lb) - pos, "<EX>");
+                    }
+                }
+                pos += fmt::snprintf(lb + pos, sizeof(lb) - pos, "\r\n");
+            }
+
+            log::debug(lb);
+        }
+    after_op_diag:;
+
+        // ── 0xA2CB726E (controller/AI opcode) — capture ourPlayerId ──
+        // When game broadcasts controller assignments, buf[0]=team, buf[1]=player.
+        // If team matches our side, we capture the player id for the AI takeover
+        // cheater-signature (4-packet attack — see ai_control.cpp).
+        {
+            unsigned int op2_peek = *a2;
+            unsigned int op3_peek = *a3;
+            if ((op2_peek == 0xA2CB726E || op3_peek == 0xA2CB726E)
+                && !hook::g_allow_attack_send
+                && a4)
+            {
+                __try {
+                    unsigned int* bd = reinterpret_cast<unsigned int*>(a4);
+                    ai_control::OnIncomingControlOpcode(bd[0], bd[1]);
+                } __except (1) {}
+            }
+        }
 
         // If WE are sending an attack, let it through — don't block ourselves
         if (hook::g_allow_attack_send) return 0;
@@ -174,6 +286,8 @@ namespace
             return 1;
         }
 
+        // Pass through: restore original RAX so stub sees non-zero and runs original
+        ((ept::register_context_t*)ctx)->rax = orig_rax;
         return 0;  // pass through to original
     }
 }
@@ -215,6 +329,20 @@ void hook::install_alttab_hook()
 // Signature: __int64 __fastcall MatchTimer(__int64 a1, __int64 a2)
 //   a1 + 0xBC8  → pointer to timer instance
 //   instance + 0x24 (float) → current match time in seconds
+// ── Per-thread reentry guard ──────────────────────────────────────────
+// If spoof_call or any downstream code touches another EPT-hooked page and
+// that page maps back to MatchTimer (directly or transitively), we would
+// re-enter this handler with our partially-updated state. On the wrong CPU
+// microcode, nested EPT exits can also corrupt the hypervisor's internal
+// state → PC freeze/restart. We bail out hard on reentry and leave a
+// breadcrumb so affected users' logs show it.
+static thread_local unsigned int tl_matchTimerDepth = 0;
+
+// Tick heartbeat — 1-in-N sampled, never per-frame. Used to tell "hook
+// never fired" from "hook fired normally then hung" in post-mortem logs.
+static volatile unsigned long long g_matchTimerTickCount = 0;
+static volatile unsigned long long g_matchTimerReentryCount = 0;
+
 extern "C" unsigned long long HookedMatchTimer(
     void* ctx,
     unsigned long long a1,
@@ -222,47 +350,167 @@ extern "C" unsigned long long HookedMatchTimer(
 {
     (void)ctx;
 
-    if (!a1) return 0;
+    // ── Reentry guard (H3 from investigation) ────────────────────────
+    if (tl_matchTimerDepth != 0)
+    {
+        g_matchTimerReentryCount++;
+        char rb[96];
+        fmt::snprintf(rb, sizeof(rb),
+            "matchtimer:REENTRY depth=%u total=%llu",
+            tl_matchTimerDepth, (unsigned long long)g_matchTimerReentryCount);
+        breadcrumb::set(rb);
+        return 0;  // pass through, touch nothing else
+    }
+    tl_matchTimerDepth = 1;
+
+    if (!a1) { tl_matchTimerDepth = 0; return 0; }
+
+    // Rate-limited tick heartbeat — once every 600 entries (~10s at 60Hz).
+    // Cheap atomic inc, no FlushFileBuffers.
+    unsigned long long tick = ++g_matchTimerTickCount;
+    if ((tick % 600) == 1)
+    {
+        char hb[128];
+        fmt::snprintf(hb, sizeof(hb),
+            "[MatchTimer] heartbeat tick=%llu tid=%u\r\n",
+            tick, (unsigned)GetCurrentThreadId());
+        log::debug(hb);
+    }
 
     __try {
         uintptr_t instance = *reinterpret_cast<uintptr_t*>(a1 + 0xBC8);
-        if (!instance) return 0;
+        if (!instance) { tl_matchTimerDepth = 0; return 0; }
 
         float current_time = *reinterpret_cast<float*>(instance + 0x24);
         float prev_time    = g_matchPrevTime;
 
         if (prev_time <= 0.0f && current_time > 0.0f)
         {
-            // Kickoff frame — condition is inherently one-shot per match
+            // Kickoff frame — condition is inherently one-shot per match.
+            // This is the dangerous path — breadcrumb every step because
+            // this is exactly where affected clients freeze.
+            breadcrumb::set("matchtimer:kickoff_enter");
+
+            char kb[160];
+            fmt::snprintf(kb, sizeof(kb),
+                "[MatchTimer] KICKOFF tid=%u tick=%llu prev=%.4f cur=%.4f\r\n",
+                (unsigned)GetCurrentThreadId(), tick, prev_time, current_time);
+            log::debug(kb);
+
+            ai_control::ResetCapture();  // next 0xA2CB726E broadcast refreshes ourPlayerId
+
+            // Arm the AI-takeover path immediately. The old 3-second dwell
+            // was nonsense — the cheat fires inside +0..+2s post-kickoff and
+            // our own one-shot latch prevents spam. Arming at the transition
+            // frame matches the cheat's observed window.
+            ai_control::g_kickoffArmed = true;
+            breadcrumb::set("matchtimer:armed");
+
 #ifndef STANDARD_BUILD
             if (ai_difficulty::g_localLegendary)
+            {
+                breadcrumb::set("matchtimer:kickoff_sending_local_legendary");
                 ai_difficulty::send_local_legendary();
+                breadcrumb::set("matchtimer:kickoff_sent_local_legendary");
+            }
             if (ai_difficulty::g_opponentBeginner)
+            {
+                breadcrumb::set("matchtimer:kickoff_sending_opponent_beginner");
                 ai_difficulty::send_opponent_beginner();
+                breadcrumb::set("matchtimer:kickoff_sent_opponent_beginner");
+            }
 #endif
+            breadcrumb::set("matchtimer:kickoff_exit");
+        }
+        else if (prev_time > 0.0f && current_time <= 0.0f)
+        {
+            // Match ended / timer reset — disarm + clear one-shot so next
+            // match starts clean.
+            ai_control::g_kickoffArmed    = false;
+            ai_control::g_aiTakeoverFired = false;
+            ai_control::ResetCapture();  // clear ourPlayerId so next match's broadcast refreshes it
+            log::debug("[MatchTimer] match ended — g_kickoffArmed=false\r\n");
+            breadcrumb::set("matchtimer:match_ended");
         }
 
         g_matchPrevTime = current_time;
     }
     __except (1) {
         // Swallow — never break the game's match timer
+        breadcrumb::set("matchtimer:EXCEPTION_in_body");
     }
 
+    tl_matchTimerDepth = 0;
     return 0;  // always pass through
 }
 
 void hook::install_match_timer_hook()
 {
+    char buf[512];
+
     if (!offsets::FnMatchTimer)
     {
         log::debug("[ZeroHook] WARNING: MatchTimer not found, AI difficulty trigger disabled\r\n");
+        breadcrumb::set("matchtimer:install_SKIPPED_null_offset");
         return;
     }
 
-    ept::install_hook(g_matchTimerHookParams,
+    // ── Install-time diagnostics ──────────────────────────────────────
+    // Primary hypothesis for client-side freeze/restart: pattern scan
+    // matched a similar-but-wrong code site on some game builds, so
+    // FnMatchTimer points at a critical function whose EPT hook destabilizes
+    // the hypervisor. Dump everything we need to tell that apart from a
+    // healthy resolve.
+    uintptr_t fnAddr   = (uintptr_t)offsets::FnMatchTimer;
+    uintptr_t vtAddr   = offsets::MatchTimerVTable;
+    uintptr_t gameBase = (uintptr_t)offsets::GameBase;
+    uintptr_t gameEnd  = gameBase + (uintptr_t)offsets::GameSize;
+    bool fnInModule    = (fnAddr >= gameBase && fnAddr < gameEnd);
+    bool vtInModule    = (vtAddr >= gameBase && vtAddr < gameEnd);
+
+    fmt::snprintf(buf, sizeof(buf),
+        "[MatchTimer] vtable=%p (inModule=%d) FnMatchTimer=%p (inModule=%d) gameBase=%p size=0x%lX\r\n",
+        (void*)vtAddr, vtInModule ? 1 : 0,
+        (void*)fnAddr, fnInModule ? 1 : 0,
+        (void*)gameBase, offsets::GameSize);
+    log::debug(buf);
+
+    // Prologue bytes — 32 bytes. If this looks nothing like a normal
+    // function prologue (no push rbp / sub rsp / mov rax,... / push rbx),
+    // the pattern scan hit garbage and we should NOT install.
+    if (fnInModule)
+    {
+        unsigned char prologue[32] = {};
+        __try {
+            for (int i = 0; i < 32; i++)
+                prologue[i] = ((unsigned char*)fnAddr)[i];
+        } __except (1) {
+            log::debug("[MatchTimer] EXCEPTION reading prologue — aborting hook install\r\n");
+            breadcrumb::set("matchtimer:install_ABORT_prologue_faulted");
+            return;
+        }
+
+        int pos = fmt::snprintf(buf, sizeof(buf), "[MatchTimer] prologue:");
+        for (int i = 0; i < 32 && pos + 4 < (int)sizeof(buf); i++)
+            pos += fmt::snprintf(buf + pos, sizeof(buf) - pos, " %02X", prologue[i]);
+        pos += fmt::snprintf(buf + pos, sizeof(buf) - pos, "\r\n");
+        log::debug(buf);
+    }
+    else
+    {
+        log::debug("[MatchTimer] WARNING: FnMatchTimer is OUTSIDE game module — pattern scan likely false-positive. Aborting install to prevent hypervisor corruption.\r\n");
+        breadcrumb::set("matchtimer:install_ABORT_out_of_module");
+        return;
+    }
+
+    breadcrumb::set("matchtimer:install_pre_ept");
+    bool ok = ept::install_hook(g_matchTimerHookParams,
         (unsigned char*)offsets::FnMatchTimer,
         (void*)&HookedMatchTimer, "MatchTimer");
-    log::debug("[ZeroHook] MatchTimer hooked (AI difficulty trigger)\r\n");
+    fmt::snprintf(buf, sizeof(buf),
+        "[ZeroHook] MatchTimer hook install returned %d\r\n", ok ? 1 : 0);
+    log::debug(buf);
+    breadcrumb::set(ok ? "matchtimer:install_ok" : "matchtimer:install_FAILED");
 }
 
 void hook::install_playerside_hook()
@@ -324,47 +572,16 @@ void hook::install_playerside_hook()
         patchE9, (void*)originalTarget);
     log::debug(buf);
 
-    // Find a code cave (14+ CC bytes) within ±256KB of the thunk
-    unsigned char* gameBase = (unsigned char*)offsets::GameBase;
-    uintptr_t gameEnd = (uintptr_t)gameBase + offsets::GameSize;
-
-    // Search entire game module for CC padding — thunk tables are dense,
-    // but normal .text has CC padding between functions.
-    // Any cave in the module is within ±2GB (module is ~440MB).
-    unsigned char* searchLo = gameBase;
-    unsigned char* searchHi = (unsigned char*)gameEnd;
-
-    unsigned char* cave = nullptr;
-    for (unsigned char* p = searchLo; p + 14 <= searchHi; p++)
-    {
-        // Accept runs of CC (int3 padding) or 00 (null padding, common in VMProtect'd binaries)
-        unsigned char fill = p[0];
-        if (fill != 0xCC && fill != 0x00) continue;
-
-        bool ok = true;
-        for (int j = 1; j < 14; j++)
-        {
-            if (p[j] != fill) { ok = false; p += j; break; }
-        }
-        if (ok)
-        {
-            unsigned int cavePageOff = (unsigned int)((uintptr_t)p & 0xFFF);
-            if (cavePageOff + 12 > 0x1000) continue;
-            cave = p;
-            break;
-        }
-    }
+    // Find a code cave (14+ padding bytes) within the game module
+    unsigned char* cave = (unsigned char*)game::find_code_cave(
+        offsets::GameBase, offsets::GameSize, 14, 12);
 
     if (!cave)
     {
-        fmt::snprintf(buf, sizeof(buf),
-            "[ZeroHook] WARNING: No code cave found for PlayerSide (searched %p-%p, %llu bytes)\r\n",
-            searchLo, searchHi, (unsigned long long)(searchHi - searchLo));
-        log::debug(buf);
+        log::debug("[ZeroHook] WARNING: No code cave found for PlayerSide\r\n");
         return;
     }
 
-    // Verify ±2GB range
     intptr_t caveDist = (intptr_t)cave - (intptr_t)(patchE9 + 5);
     if (caveDist > 0x7FFFFFFFL || caveDist < -(intptr_t)0x7FFFFFFFL)
     {
@@ -377,8 +594,6 @@ void hook::install_playerside_hook()
     log::debug(buf);
 
     // Build 12-byte trampoline: mov rax, <hook>; jmp rax
-    // 48 B8 [imm64]  = mov rax, imm64 (10 bytes)
-    // FF E0           = jmp rax        (2 bytes)
     unsigned long long hookAddr = (unsigned long long)&HookedPlayerSide;
     unsigned char trampoline[12];
     trampoline[0] = 0x48;
@@ -388,52 +603,191 @@ void hook::install_playerside_hook()
     trampoline[10] = 0xFF;
     trampoline[11] = 0xE0;
 
-    // EPT patch the cave page: shadow exec view gets trampoline, read view stays original
-    ept_patch_bytes_params_t caveParams = {};
-    caveParams.patch_offset = (unsigned int)((unsigned long long)cave & 0xFFF);
-    caveParams.patch_size = 12;
-    for (int i = 0; i < 12; i++)
-        caveParams.patch_bytes[i] = trampoline[i];
-
-    implant_request_t req = {};
-    req.command = CMD_EPT_PATCH_BYTES;
-    req.param1 = (unsigned long long)cave;
-    req.param2 = (unsigned long long)&caveParams;
-    ntclose_syscall(NTCLOSE_MAGIC, (unsigned long long)&req);
-
-    if (req.status != 0 || req.result != 1)
+    if (!game::ept_patch((uintptr_t)cave, trampoline, 12))
     {
-        fmt::snprintf(buf, sizeof(buf), "[ZeroHook] WARNING: EPT patch cave failed (status=%u result=%llu)\r\n",
-            req.status, req.result);
-        log::debug(buf);
+        log::debug("[ZeroHook] WARNING: EPT patch cave failed\r\n");
         return;
     }
     log::debug("[ZeroHook] PlayerSide cave trampoline EPT-patched\r\n");
 
-    // EPT patch the thunk page: redirect E9 displacement to cave
+    // EPT patch the thunk: redirect E9 displacement to cave
     int newRel = (int)((long long)cave - (long long)(patchE9 + 5));
-
-    ept_patch_bytes_params_t thunkParams = {};
-    thunkParams.patch_offset = (unsigned int)(((unsigned long long)(patchE9 + 1)) & 0xFFF);
-    thunkParams.patch_size = 4;
+    unsigned char relBytes[4];
     for (int i = 0; i < 4; i++)
-        thunkParams.patch_bytes[i] = ((unsigned char*)&newRel)[i];
+        relBytes[i] = ((unsigned char*)&newRel)[i];
 
-    req = {};
-    req.command = CMD_EPT_PATCH_BYTES;
-    req.param1 = (unsigned long long)patchE9;
-    req.param2 = (unsigned long long)&thunkParams;
-    ntclose_syscall(NTCLOSE_MAGIC, (unsigned long long)&req);
-
-    if (req.status == 0 && req.result == 1)
+    if (game::ept_patch((uintptr_t)(patchE9 + 1), relBytes, 4))
     {
         g_originalPlayerSide = (PlayerSideFn_t)originalTarget;
         log::debug("[ZeroHook] PlayerSide EPT hook installed (thunk + cave patched)\r\n");
     }
     else
     {
-        fmt::snprintf(buf, sizeof(buf), "[ZeroHook] WARNING: EPT patch thunk failed (status=%u result=%llu)\r\n",
-            req.status, req.result);
-        log::debug(buf);
+        log::debug("[ZeroHook] WARNING: EPT patch thunk failed\r\n");
     }
+}
+
+// ===== EAID Spoofer hook (EPT full-context hook via ept::install_hook) =====
+// Function: unsigned char* __fastcall fn(unsigned char* a1)
+// Original: fetches EAID from game structs → writes to a1+0x78 → returns a1+0x78
+// Hook: if spoof ON → writes custom string to a1+0x78, sets rax=a1+0x78, skips original
+//       if spoof OFF → passes through to original
+namespace
+{
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_eaidHookParams = {};
+
+    extern "C" unsigned long long HookedEAID(void* ctx)
+    {
+        if (proclub::g_spoofEAID && proclub::g_spoofEAIDText[0])
+        {
+            auto* regs = (ept::register_context_t*)ctx;
+            unsigned char* a1 = (unsigned char*)regs->rcx;
+            if (!a1) return 0;  // pass through if game passes null
+
+            constexpr int EAID_REGION = 0x15; // 21 bytes (0x8D - 0x78)
+            __stosb(a1 + 0x78, 0, EAID_REGION);
+
+            const char* src = proclub::g_spoofEAIDText;
+            int len = 0;
+            while (len < EAID_REGION && src[len]) len++;
+            __movsb(a1 + 0x78, (const unsigned char*)src, len);
+
+            regs->rax = (unsigned long long)(a1 + 0x78);
+            return 1;  // skip original
+        }
+        return 0;  // pass through to original
+    }
+}
+
+void hook::install_eaid_hook()
+{
+    if (!offsets::FnEAID)
+    {
+        log::debug("[ZeroHook] WARNING: EAID function not found\r\n");
+        return;
+    }
+
+    ept::install_hook(g_eaidHookParams,
+        (unsigned char*)offsets::FnEAID,
+        (void*)&HookedEAID, "EAID");
+    log::debug("[ZeroHook] EAID hooked\r\n");
+}
+
+// ===== DataMismatch gate hook (EPT full-context hook) =====
+//
+// Target: sub_142825AC0 — validates incoming 0xA2CB726E and 0x4E9507C9 packets.
+//   Signature: char(__fastcall)(__int64 a1, int a2, _DWORD* a3, __int64 a4,
+//                                int a5, unsigned __int8 a6, char a7)
+//   a3 = pointer to opcode DWORD.
+//   Return 1 → caller treats as MISMATCH → DataMismatch DC.
+//   Return 0 / fallthrough → calls sub_145096120 (FnBaseHandler) to process
+//   the message normally.
+//
+// Our detour: if opcode ∈ {0xA2CB726E, 0x4E9507C9}, bypass validation and
+// call FnBaseHandler directly with original args, return its result. Any
+// other opcode passes through to the original validator unchanged.
+namespace
+{
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_mismatchHookParams = {};
+
+    typedef char(__fastcall* BaseHandlerFn)(
+        __int64 a1, int a2, unsigned int* a3, __int64 a4,
+        int a5, unsigned __int8 a6, char a7);
+
+    // EPT hook detour. Signature matches the full-context wrapper the stub
+    // emits: (ctx, a1, a2, a3, a4, a5, a6, a7) — 7 original args after ctx.
+    extern "C" unsigned long long HookedMismatchGate(
+        void* ctx,
+        __int64 a1,
+        int a2,
+        unsigned int* a3,
+        __int64 a4,
+        int a5,
+        unsigned __int8 a6,
+        char a7)
+    {
+        unsigned long long orig_rax = ((ept::register_context_t*)ctx)->rax;
+
+        if (!a3) return 0;  // defensive — let original handle null
+
+        unsigned int op;
+        __try { op = *a3; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+
+        if (op == 0x4E9507C9 || op == 0xA2CB726E)
+        {
+            if (!offsets::FnBaseHandler) return 0;
+
+            char result = 0;
+            __try {
+                BaseHandlerFn base = (BaseHandlerFn)offsets::FnBaseHandler;
+                result = base(a1, a2, a3, a4, a5, a6, a7);
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                // If base handler crashes, fall back to letting original run
+                return 0;
+            }
+
+            ((ept::register_context_t*)ctx)->rax =
+                (unsigned long long)(unsigned char)result;
+            return 1;  // skip original validator → no DataMismatch possible
+        }
+
+        // Pass through: restore original RAX so stub sees non-zero and runs original
+        ((ept::register_context_t*)ctx)->rax = orig_rax;
+        return 0;  // other opcodes: pass through to original validator
+    }
+}
+
+void hook::install_mismatch_gate_hook()
+{
+    if (!offsets::FnMismatchGate || !offsets::FnBaseHandler)
+    {
+        log::debug("[ZeroHook] WARNING: MismatchGate or BaseHandler not resolved, DC-bypass disabled\r\n");
+        return;
+    }
+
+    ept::install_hook(g_mismatchHookParams,
+        (unsigned char*)offsets::FnMismatchGate,
+        (void*)&HookedMismatchGate, "MismatchGate");
+    log::debug("[ZeroHook] MismatchGate hooked — 0xA2CB726E/0x4E9507C9 validation bypassed\r\n");
+}
+
+// ===== Physics-sync checksum bypass (EPT full-context hook) =====
+//
+// Target: sub_1445C9CE0 — compares local vs peer physics hash strings.
+//   Signature: char(__fastcall)(__int64 a1, __int64* a2, __int128* a3, __int64 a4)
+//   Return 1 → caller treats as MISMATCH, routes to sub_144554810 (DC submit).
+//   Return 0 → OK, continues normally.
+//
+// The check is gated by a ~60-120s time window post-kickoff. Once active,
+// any physics state divergence (including the one caused by AI takeover
+// writes to slot+0x00) triggers instant DC.
+//
+// Our detour: unconditionally force return 0. Neutralizes physics-sync
+// DataMismatch client-side globally.
+namespace
+{
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_checksumHookParams = {};
+
+    extern "C" unsigned long long HookedChecksumCheck(void* ctx)
+    {
+        // Force "no mismatch". rax = 0 → caller sees check passed.
+        auto* regs = (ept::register_context_t*)ctx;
+        regs->rax = 0;
+        return 1;  // skip original
+    }
+}
+
+void hook::install_checksum_check_hook()
+{
+    if (!offsets::FnChecksumCheck)
+    {
+        log::debug("[ZeroHook] WARNING: ChecksumCheck not resolved, physics-sync DC bypass disabled\r\n");
+        return;
+    }
+
+    ept::install_hook(g_checksumHookParams,
+        (unsigned char*)offsets::FnChecksumCheck,
+        (void*)&HookedChecksumCheck, "ChecksumCheck");
+    log::debug("[ZeroHook] ChecksumCheck hooked — physics-sync DataMismatch neutralized\r\n");
 }
