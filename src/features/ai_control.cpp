@@ -229,58 +229,75 @@ namespace
         return true;
     }
 
-    // AI takeover, single-slot + paired state-sync. This is what the cheat
-    // actually does (confirmed via IDA + log diff against 3 cheat logs):
-    //   1. Write slot[captain].controller_id = 0xFFFFFFFF
-    //   2. Call FnAiStateSync(ctx, captain_slot, 0) — emits the paired
-    //      0x4E9507C9 (0x290-byte state snapshot) so peer's hash check
-    //      accepts the flip.
-    // NO stride sweep. Writing OPP slots triggers the game's dispatcher to
-    // rebroadcast 0xA2CB726E for those players with Buf[2]=0x00000001 (the
-    // "human takeover" flag), which the peer flags as DataMismatch on
-    // opponent squad (verified against try_2 log: 115 such packets at
-    // RetAddr 0x14566B349, zero in all 3 cheat logs).
-    bool ApplyAiTakeoverCaptain(uintptr_t ctx, const char* label)
+    // Option A — local matchData write. No network emit, no state-machine
+    // invocation. Replicates exactly what the in-game AI-takeover effectively
+    // leaves behind in the 22-slot player table, derived from IDA RE of the
+    // incoming 0xA2CB726E handler sub_14281A4F0:
+    //
+    //   matchData layout (ctx = return of FnGetMatchCtx = sub_142805590):
+    //     +0x10 + k*0x1A0  = player entry k  (22 entries, 0x1A0 stride)
+    //         +0x08  u32   teamSide          (0=home, 1=away)
+    //         +0x178 u32   Slot              (controller idx; 0xFFFFFFFF=AI)
+    //         +0x17C u32   modeflag
+    //         +0x198 u32   modeflag mirror
+    //     +0x23D4          u32   local_teamSide  (our side)
+    //     +0x2550          u32   num_unassigned_slots
+    //     +0x5198          u8[22]  controller-active bitmap indexed by
+    //                              teamSide*0xB + slot_0..10
+    //
+    // Only touches our 11 entries. Does NOT modify Team(+0x00) — that field
+    // belongs to server-reconciled state and writing 0xFFFFFFFF trips the
+    // peer's team-balance watchdog.
+    bool ApplyMySideAiMarkers(uintptr_t ctx, const char* label)
     {
-        // MINIMAL TEST — write exactly ONE byte.
-        //
-        // IDA decomp of sub_1427FD810 (at 0x1427FD810) shows its first action
-        // after the entry gate is:
-        //     *(BYTE*)(a1 + 0x1AA8) = 1;
-        // where a1 is the state-root object (dereffed from qword_14D895190).
-        //
-        // We do not currently know what reads this byte or what behavior it
-        // changes. We are testing: does writing this single byte alone produce
-        // any observable effect (cursor, AI takeover, crash, nothing)?
-        //
-        // No other writes, no spoof_calls, no packet emissions. Minimum viable
-        // experiment.
-        (void)ctx;
+        if (!ctx) return false;
 
-        if (!offsets::StateRootPtrAddr) {
-            log::debug("[AI] StateRootPtrAddr missing\r\n");
+        uint32_t mySide   = 0xFFFFFFFFu;
+        uint32_t hits     = 0;
+        uint32_t crashes  = 0;
+        __try {
+            mySide = *reinterpret_cast<uint32_t*>(ctx + 0x23D4);
+        } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        if (mySide != 0 && mySide != 1) {
+            char buf[128];
+            fmt::snprintf(buf, sizeof(buf),
+                "[AI] %s mySide=%u out of range — abort\r\n", label, mySide);
+            log::debug(buf);
             return false;
         }
 
-        uintptr_t stateRoot = 0;
-        uint8_t prev = 0xFF;
-        bool wrote = false;
-        __try {
-            stateRoot = *(uintptr_t*)offsets::StateRootPtrAddr;
-            if (stateRoot) {
-                prev = *(uint8_t*)(stateRoot + 0x1AA8);
-                *(uint8_t*)(stateRoot + 0x1AA8) = 1;
-                wrote = true;
-            }
-        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        uintptr_t tableBase = ctx + 0x10;
+        for (uint32_t k = 0; k < 22; ++k) {
+            uintptr_t entry = tableBase + 0x1A0ULL * k;
+            __try {
+                uint32_t side = *reinterpret_cast<uint32_t*>(entry + 0x08);
+                if (side != mySide) continue;
+                *reinterpret_cast<uint32_t*>(entry + 0x178) = 0xFFFFFFFFu;
+                *reinterpret_cast<uint32_t*>(entry + 0x17C) = 0;
+                *reinterpret_cast<uint32_t*>(entry + 0x198) = 0;
+                ++hits;
+            } __except (EXCEPTION_EXECUTE_HANDLER) { ++crashes; }
+        }
 
-        char buf[160];
+        // Clear active-controller bitmap for our 11 slot positions.
+        __try {
+            uint8_t* bitmap = reinterpret_cast<uint8_t*>(ctx + 0x5198);
+            for (uint32_t s = 0; s < 11; ++s)
+                bitmap[mySide * 0xB + s] = 0;
+        } __except (EXCEPTION_EXECUTE_HANDLER) { ++crashes; }
+
+        // Bump unassigned counter to match the handler's bookkeeping.
+        __try {
+            (*reinterpret_cast<uint32_t*>(ctx + 0x2550)) += 1;
+        } __except (EXCEPTION_EXECUTE_HANDLER) { ++crashes; }
+
+        char buf[192];
         fmt::snprintf(buf, sizeof(buf),
-            "[AI] %s stateRoot=%p +0x1AA8 prev=%02X wrote=%d\r\n",
-            label, (void*)stateRoot, (unsigned)prev, wrote ? 1 : 0);
+            "[AI] %s mySide=%u hits=%u crashes=%u (OptionA matchData-local)\r\n",
+            label, mySide, hits, crashes);
         log::debug(buf);
 
-        return wrote;
+        return hits > 0 && crashes == 0;
     }
 }
 
@@ -299,7 +316,7 @@ bool ai_control::SendAiTakeover()
     uintptr_t ctx = GetMatchCtx();
     if (!ctx || !IsInActiveGameplay(ctx)) return false;
 
-    if (!ApplyAiTakeoverCaptain(ctx, "takeover-self")) {
+    if (!ApplyMySideAiMarkers(ctx, "takeover-self")) {
         toast::Show(toast::Type::Error, "AI: takeover failed");
         return false;
     }
