@@ -323,61 +323,82 @@ bool ai_control::SendAiTakeover()
     //
     // The right answer is one function call per slot.
 
+    // PRE-KICKOFF trigger (fires during match-setup, not at kickoff whistle):
+    //   Gate on g_playerIdCaptured only. That flag flips when the game
+    //   broadcasts the initial 0xA2CB726E controller-init — which happens
+    //   during match-setup, 6-25 seconds BEFORE the MatchTimer kickoff
+    //   transition (per empirical log analysis). The previous gate on
+    //   g_kickoffArmed fired AT kickoff — too late; the takeover state
+    //   machine requires the slot table to be populated but not yet locked
+    //   by the match-start barrier.
+    //
+    // Approach — belt-and-suspenders:
+    //   1. Call sub_142814760(ctx, slot) for all 22 slots. The function
+    //      internally filters by occupied-state; slots that don't match our
+    //      team or aren't populated simply no-op. This removes the wrong
+    //      external filter on slot+0x08 that caused sent=1 (most slots in
+    //      1v1 don't carry our teamSide in that field).
+    //   2. ALSO direct-write the IsAway trio (+0x194, +0x193, +0x177) on
+    //      every slot whose Team field (+0x00) matches our mySide at
+    //      +0x23D4 OR whose Team is 0xFFFFFFFF (unassigned). This ensures
+    //      the local IsAway getter returns true even if sub_142814760's
+    //      internal gate no-ops for that slot.
+
     if (g_aiTakeoverFired) return false;
-    if (!g_kickoffArmed)   return false;
+    if (!g_playerIdCaptured) return false;  // pre-kickoff gate
 
     uintptr_t ctx = GetMatchCtx();
-    if (!ctx || !IsInActiveGameplay(ctx)) return false;
-
-    if (!offsets::FnTakeOverSlot) {
-        log::debug("[AI] FnTakeOverSlot unresolved\r\n");
-        return false;
-    }
+    if (!ctx) return false;
 
     uint32_t mySide = 0xFFFFFFFFu;
     __try { mySide = *reinterpret_cast<uint32_t*>(ctx + 0x23D4); }
-    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
-    if (mySide != 0 && mySide != 1) {
-        char b[128];
-        fmt::snprintf(b, sizeof(b),
-            "[AI] mySide=%u out of {0,1} — refusing takeover\r\n", mySide);
-        log::debug(b);
-        return false;
-    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {}
 
-    typedef int64_t(__fastcall* takeover_fn)(uintptr_t, int);
-    auto fn = reinterpret_cast<takeover_fn>(offsets::FnTakeOverSlot);
-
-    uintptr_t tableBase = ctx + 0x10;
     int sent = 0;
     int threw = 0;
-    int skipped_side = 0;
+    int wrote = 0;
 
+    // Step 1: call the game's TakeOver API for every slot index.
+    if (offsets::FnTakeOverSlot) {
+        typedef int64_t(__fastcall* takeover_fn)(uintptr_t, int);
+        auto fn = reinterpret_cast<takeover_fn>(offsets::FnTakeOverSlot);
+        for (int slot = 0; slot < 22; ++slot) {
+            __try { fn(ctx, slot); ++sent; }
+            __except (EXCEPTION_EXECUTE_HANDLER) { ++threw; }
+        }
+    }
+
+    // Step 2: direct-write IsAway flags on slots we own or unassigned.
+    uintptr_t tableBase = ctx + 0x10;
     for (int slot = 0; slot < 22; ++slot) {
         uintptr_t row = tableBase + 0x1A0ULL * static_cast<uintptr_t>(slot);
-        uint32_t slotSide = 0xFFFFFFFFu;
-        __try { slotSide = *reinterpret_cast<uint32_t*>(row + 0x08); }
-        __except (EXCEPTION_EXECUTE_HANDLER) { continue; }
-        if (slotSide != mySide) { ++skipped_side; continue; }
-
         __try {
-            fn(ctx, slot);
-            ++sent;
-        } __except (EXCEPTION_EXECUTE_HANDLER) { ++threw; }
+            uint32_t team = *reinterpret_cast<uint32_t*>(row + 0x00);
+            uint32_t side = *reinterpret_cast<uint32_t*>(row + 0x08);
+            bool oursBySide = (side == mySide);
+            bool oursByTeam = (team == mySide);
+            bool unassigned = (team == 0xFFFFFFFFu);
+            if (oursBySide || oursByTeam || unassigned) {
+                *reinterpret_cast<uint8_t*>(row + 0x194) = 1;  // IsAway
+                *reinterpret_cast<uint8_t*>(row + 0x193) = 1;  // keyboard-released
+                *reinterpret_cast<uint8_t*>(row + 0x177) = 1;  // sibling
+                ++wrote;
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
     }
 
     char lb[192];
     fmt::snprintf(lb, sizeof(lb),
-        "[AI] takeover-self mySide=%u sent=%d threw=%d skipped_other_side=%d (via FnTakeOverSlot)\r\n",
-        mySide, sent, threw, skipped_side);
+        "[AI] takeover-self PRE-KICKOFF mySide=%u fn_sent=%d fn_threw=%d direct_wrote=%d\r\n",
+        mySide, sent, threw, wrote);
     log::debug(lb);
 
-    if (sent == 0) {
-        toast::Show(toast::Type::Error, "AI: no slots took over");
+    if (sent == 0 && wrote == 0) {
+        toast::Show(toast::Type::Error, "AI: takeover did nothing");
         return false;
     }
     g_aiTakeoverFired = true;
-    toast::Show(toast::Type::Success, "AI takeover armed");
+    toast::Show(toast::Type::Success, "AI takeover armed (pre-kickoff)");
     return true;
 }
 
