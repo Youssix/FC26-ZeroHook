@@ -37,9 +37,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
         hook::install_playerside_hook();      breadcrumb::set("boot:playerside_hooked");
         hook::install_match_timer_hook();     breadcrumb::set("boot:matchtimer_hooked");
         hook::install_eaid_hook();            breadcrumb::set("boot:eaid_hooked");
-        hook::install_mismatch_gate_hook();   breadcrumb::set("boot:mismatch_hooked");
-        hook::install_checksum_check_hook();  breadcrumb::set("boot:checksum_hooked");
-
         ai_trace::install_all();              breadcrumb::set("boot:ai_trace_hooked");
 
         bridge::init("FC26");

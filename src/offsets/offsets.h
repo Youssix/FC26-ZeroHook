@@ -101,22 +101,6 @@ namespace offsets
     extern uintptr_t EAIDVTable;
     extern void*     FnEAID;
 
-    // DataMismatch gate (sub_142825AC0). Validates incoming 0xA2CB726E and
-    // 0x4E9507C9 packets; returns 1 → caller submits DC. We EPT-hook this to
-    // bypass validation for those two opcodes so forged packets don't trigger
-    // DataMismatch. The hook calls FnBaseHandler (sub_145096120) directly when
-    // bypassing so the normal message processing still runs.
-    extern void* FnMismatchGate;    // sub_142825AC0
-    extern void* FnBaseHandler;     // sub_145096120 — real message pre-processor
-
-    // Physics-sync checksum verifier (sub_1445C9CE0). Called by sub_1445BF230
-    // to compare local vs peer physics state hashes. Returns 1 = mismatch
-    // (which routes through "Checksum mismatch for %s" → sub_144554810 DC
-    // submission), 0 = OK. We EPT-hook this to force return 0 always —
-    // physics-sync DataMismatch becomes unreachable. The check is gated by
-    // a ~60-120s time window post-kickoff; our hook neutralizes it globally.
-    extern void* FnChecksumCheck;   // sub_1445C9CE0
-
     // Resolve everything — call once from DllMain before hooks
     bool Init();
 }

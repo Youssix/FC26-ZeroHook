@@ -37,9 +37,6 @@ void*         offsets::FnTakeOverSlot       = nullptr; // sub_142814760
 uintptr_t     offsets::StateRootPtrAddr   = 0;        // &qword_14D895190
 uintptr_t     offsets::EAIDVTable        = 0;
 void*         offsets::FnEAID            = nullptr;
-void*         offsets::FnMismatchGate    = nullptr;  // sub_142825AC0
-void*         offsets::FnBaseHandler     = nullptr;  // sub_145096120
-void*         offsets::FnChecksumCheck   = nullptr;  // sub_1445C9CE0
 
 // ── Helpers ─────────────────────────────────────────────────────────
 namespace
@@ -402,43 +399,6 @@ bool offsets::Init()
         "[offsets] [14] %s EAIDVTable: %p  FnEAID: %p\r\n",
         (EAIDVTable && FnEAID) ? "OK" : "FAIL",
         (void*)EAIDVTable, FnEAID);
-    log::debug(buf);
-
-    // ── 15. DataMismatch gate (sub_142825AC0) ──────────────────────────
-    //   Validates incoming 0xA2CB726E and 0x4E9507C9 packets. Returns 1
-    //   on structural mismatch → caller triggers DataMismatch DC.
-    //   Prologue: save RBX/RBP/RSI/RDI, push R12/R14/R15, sub rsp,0x1E0,
-    //   then `mov rax, [rcx+0x128]` (flag check). 39-byte unique pattern.
-    FnMismatchGate = game::pattern_scan(GameBase, GameSize,
-        "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 54 41 56 41 57 48 81 EC E0 01 00 00 48 8B 81 28 01 00 00");
-    fmt::snprintf(buf, sizeof(buf),
-        "[offsets] [15] %s FnMismatchGate: %p\r\n",
-        FnMismatchGate ? "OK" : "FAIL", FnMismatchGate);
-    log::debug(buf);
-
-    // ── 16. Base message pre-processor (sub_145096120) ─────────────────
-    //   Called as tail-call from FnMismatchGate when validation passes.
-    //   We call it directly from our hook to bypass validation.
-    //   Prologue: save RBP/RSI/RDI, push R14, sub rsp,0x40, then a
-    //   `cmp qword [rcx+0xF8], 0` — unique 31-byte pattern.
-    FnBaseHandler = game::pattern_scan(GameBase, GameSize,
-        "48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 56 48 83 EC 40 48 83 B9 F8 00 00 00 00 49 8B F1");
-    fmt::snprintf(buf, sizeof(buf),
-        "[offsets] [16] %s FnBaseHandler: %p\r\n",
-        FnBaseHandler ? "OK" : "FAIL", FnBaseHandler);
-    log::debug(buf);
-
-    // ── 17. Physics-sync checksum check (sub_1445C9CE0) ─────────────────
-    //   Compares local vs peer physics hash strings. Returns 1 on mismatch
-    //   → caller routes to DC submission. We hook to force return 0 always.
-    //   Prologue: save RBX/R12, push RBP/R14/R15, lea rbp,[rsp-0x47],
-    //   sub rsp,0x90, then `cmp byte [rdx+0x28], 0` (ready-flag check).
-    //   40-byte unique pattern.
-    FnChecksumCheck = game::pattern_scan(GameBase, GameSize,
-        "48 89 5C 24 18 4C 89 64 24 20 55 41 56 41 57 48 8D 6C 24 B9 48 81 EC 90 00 00 00 80 7A 28 00 4D 8B E1 4D 8B F0 48 8B DA");
-    fmt::snprintf(buf, sizeof(buf),
-        "[offsets] [17] %s FnChecksumCheck: %p\r\n",
-        FnChecksumCheck ? "OK" : "FAIL", FnChecksumCheck);
     log::debug(buf);
 
     log::debug("[offsets] Init complete\r\n");

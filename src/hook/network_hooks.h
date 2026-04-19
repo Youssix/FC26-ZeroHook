@@ -12,6 +12,4 @@ namespace hook
     void install_playerside_hook();
     void install_match_timer_hook();
     void install_eaid_hook();
-    void install_mismatch_gate_hook();
-    void install_checksum_check_hook();
 }
