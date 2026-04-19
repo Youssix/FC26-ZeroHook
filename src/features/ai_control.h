@@ -38,6 +38,15 @@ namespace ai_control
     // Reset to false at match-ended and on new kickoff.
     extern volatile bool g_aiTakeoverFired;
 
+    // Deep-hook AI takeover toggle. When true, the AFK_DECISION_BRAIN hook
+    // (sub_14282BB00) intercepts calls for our own slots and invokes the
+    // game's own sub_1427F7640 (FnAfkTakeover) directly with the exact args
+    // the brain would have produced — then skips the brain's normal path.
+    // No packet forging, no state replication; the game's own validated
+    // code does the takeover.
+    // Runtime-toggled via Settings > Deep Hook AI Takeover.
+    extern volatile bool g_deepHookAiTakeover;
+
     // Reset capture flag (called on match start / kickoff frame).
     void ResetCapture();
 

@@ -1125,6 +1125,9 @@ void overlay::Frame(float screenW, float screenH)
                 CustomMenu::g_menu.Toggle("Trace Opcodes",
                     (bool*)&ai_trace::g_traceOpcodes,
                     "Log every inbound RouteGameMessage opcode (minus 4 framing opcodes) to zerohook.log. Toggle live — no restart. OFF by default.");
+                CustomMenu::g_menu.Toggle("Deep Hook AI Takeover",
+                    (bool*)&ai_control::g_deepHookAiTakeover,
+                    "Intercept the game's AFK decision brain (sub_14282BB00) and force it to invoke FnAfkTakeover for every slot on OUR team. Piggybacks on the game's own validated takeover path — no forged packets. Toggle live.");
                 CustomMenu::g_menu.EndSection();
             }
         }

@@ -36,10 +36,11 @@
 #include "../menu/toast.h"
 
 // Kept for compatibility with the RouteGameMessage capture code.
-volatile uint32_t ai_control::g_ourPlayerId      = 0;
-volatile bool     ai_control::g_playerIdCaptured = false;
-volatile bool     ai_control::g_kickoffArmed     = false;
-volatile bool     ai_control::g_aiTakeoverFired  = false;
+volatile uint32_t ai_control::g_ourPlayerId        = 0;
+volatile bool     ai_control::g_playerIdCaptured   = false;
+volatile bool     ai_control::g_kickoffArmed       = false;
+volatile bool     ai_control::g_aiTakeoverFired    = false;
+volatile bool     ai_control::g_deepHookAiTakeover = false;
 
 void ai_control::ResetCapture()
 {

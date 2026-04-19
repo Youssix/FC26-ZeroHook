@@ -5,6 +5,7 @@
 #include "../hook/ept_hook.h"
 #include "../log/log.h"
 #include "../log/fmt.h"
+#include "ai_control.h"
 
 volatile bool ai_trace::g_traceOpcodes = false;
 
@@ -267,12 +268,54 @@ extern "C" unsigned long long TraceHook_AfkDecisionBrain(
     unsigned char latch2557 = 0xFF;
     unsigned char idleTimer = 0xFF;
     unsigned char idleActive= 0xFF;
+    unsigned int  ourTeam   = 0xFFFFFFFF;
+    unsigned int  slotTeam  = 0xFFFFFFFF;
     __try {
         latch2554  = *(unsigned char*)(a1 + 0x2554);
         latch2557  = *(unsigned char*)(a1 + 0x2557);
         idleTimer  = *(unsigned char*)(a1 + 0x4CD0 + (unsigned long long)a2 * 128);
         idleActive = *(unsigned char*)(a1 + 0x4CD1 + (unsigned long long)a2 * 128);
+        ourTeam    = *(unsigned int*)(a1 + 0x23D4);
+        slotTeam   = *(unsigned int*)(a1 + 0x10 + (unsigned long long)a2 * 0x1A0 + 0x08);
     } __except (1) {}
+
+    bool isOurSlot = (ourTeam == 0 || ourTeam == 1) && (slotTeam == ourTeam);
+
+    // ── Deep-hook AI takeover ─────────────────────────────────────────
+    // When the toggle is on and the brain is about to process one of our
+    // slots, call the game's own sub_1427F7640 (FnAfkTakeover) directly
+    // with the exact args this invocation would have received on its
+    // AFK-takeover branch, then skip the brain's normal processing.
+    //
+    // The brain's natural call site is:
+    //     if (v36) sub_1427F7640(a1, v6, v34, v36);
+    // where v34 is a derived team flag (we pass 0 — matches what the
+    // log shows on natural AFK triggers) and v36 is an "is-idle-event"
+    // flag we approximate as a5 (the eventType arg passed into the brain).
+    if (ai_control::g_deepHookAiTakeover && isOurSlot)
+    {
+        typedef void (__fastcall* AfkTakeoverFn)(
+            unsigned long long matchCtx, unsigned long long slot,
+            unsigned char teamFlag, unsigned char eventType);
+
+        constexpr uintptr_t kFnAfkTakeoverRva = 0x27F7640ULL;
+        uintptr_t fnAddr = (uintptr_t)offsets::GameBase + kFnAfkTakeoverRva;
+
+        __try {
+            auto fn = reinterpret_cast<AfkTakeoverFn>(fnAddr);
+            fn(a1, (unsigned long long)a2, 0, (unsigned char)a5);
+        } __except (1) {}
+
+        char dh[256];
+        fmt::snprintf(dh, sizeof(dh),
+            "(DEEP_HOOK fired matchCtx=%016llX slot=%u ourTeam=%u slotTeam=%u eventType=%u)",
+            a1, a2, ourTeam, slotTeam, a5);
+        emit_line("sub_14282BB00 AFK_DECISION_BRAIN", dh, ctx);
+
+        // Skip the brain's normal processing — takeover is handled.
+        ((ept::register_context_t*)ctx)->rax = 0;
+        return 1;
+    }
 
     unsigned int sig = ((unsigned int)latch2554)
                      | ((unsigned int)latch2557  << 8)
@@ -285,8 +328,9 @@ extern "C" unsigned long long TraceHook_AfkDecisionBrain(
 
     char extra[256];
     fmt::snprintf(extra, sizeof(extra),
-        "(matchCtx=%016llX slot=%u a3=%016llX eventType=%u latch2554=%u latch2557=%u perslot_isAI=%u perslot_timerOn=%u)",
-        a1, a2, a3, a5, latch2554, latch2557, idleTimer, idleActive);
+        "(matchCtx=%016llX slot=%u a3=%016llX eventType=%u latch2554=%u latch2557=%u perslot_isAI=%u perslot_timerOn=%u ourSlot=%d)",
+        a1, a2, a3, a5, latch2554, latch2557, idleTimer, idleActive,
+        isOurSlot ? 1 : 0);
     emit_line("sub_14282BB00 AFK_DECISION_BRAIN", extra, ctx);
     return 0;
 }
