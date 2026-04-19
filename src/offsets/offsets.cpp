@@ -33,6 +33,7 @@ void*         offsets::FnAiStateSync      = nullptr;
 void*         offsets::FnAfkTakeover      = nullptr;  // sub_1427F7640
 void*         offsets::FnAiTakeoverDispatch = nullptr; // sub_142812730
 void*         offsets::FnAiTakeoverEnabler  = nullptr; // sub_1427FD810
+void*         offsets::FnTakeOverSlot       = nullptr; // sub_142814760
 uintptr_t     offsets::StateRootPtrAddr   = 0;        // &qword_14D895190
 uintptr_t     offsets::EAIDVTable        = 0;
 void*         offsets::FnEAID            = nullptr;
@@ -340,6 +341,20 @@ bool offsets::Init()
     fmt::snprintf(buf, sizeof(buf),
         "[offsets] [12c] %s FnAiTakeoverEnabler: %p\r\n",
         FnAiTakeoverEnabler ? "OK" : "FAIL", FnAiTakeoverEnabler);
+    log::debug(buf);
+
+    // ── 12d. Public TakeOver API (sub_142814760) ────────────────────
+    //   Per-slot AFK/AI takeover. Writes slot+0x194=1 (the local-away
+    //   bit read by IsAway) + conditional slot+0x193=1, slot+0x177=1,
+    //   + network announce via sub_142814510 (vtable 0xC0 dispatch).
+    //   Prologue: mov [rsp+arg_10],rbx; push rbp/rsi/rdi/r12/r13/r14/r15;
+    //             mov eax, 2430h; call __alloca_probe; sub rsp,rax
+    //   The 0x2430 stack allocation for 22-slot snapshot is distinctive.
+    FnTakeOverSlot = game::pattern_scan(GameBase, GameSize,
+        "48 89 5C 24 ? 55 56 57 41 54 41 55 41 56 41 57 B8 30 24 00 00 E8");
+    fmt::snprintf(buf, sizeof(buf),
+        "[offsets] [12d] %s FnTakeOverSlot: %p\r\n",
+        FnTakeOverSlot ? "OK" : "FAIL", FnTakeOverSlot);
     log::debug(buf);
 
     // ── 13. State-root pointer global (qword_14D895190) ────────────

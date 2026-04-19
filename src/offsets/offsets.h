@@ -79,6 +79,18 @@ namespace offsets
     // state-root (qword_14D895190 dereffed), NOT matchData from FnGetMatchCtx.
     extern void* FnAiTakeoverEnabler;  // sub_1427FD810
 
+    // sub_142814760 — the PUBLIC "TakeOver" API (per-slot AFK/AI takeover).
+    // Signature: __int64 __fastcall(__int64 matchData, int slotIdx) — for a
+    // single slot, writes slot+0x194=1 (the local-away bit read by IsAway
+    // getter sub_142811330 — the field the input dispatcher checks to pick
+    // "human vs AI" for that slot). Conditionally also writes slot+0x193=1,
+    // slot+0x177=1, and calls sub_142814510(sessionId@+0x16C, 1, 0, 1) which
+    // dispatches via vtable 0xC0 to the online subsystem (peer announce).
+    // Called by the game naturally on AFK-timeout; we invoke it directly
+    // per-slot for our team's 11 slots to force immediate AI takeover.
+    // Companion Release: sub_142829430 (same sig, flips flags back to 0).
+    extern void* FnTakeOverSlot;  // sub_142814760
+
     // Address of qword_14D895190 (global state-root pointer). Resolved
     // from the first instruction of sub_142805590 (mov rax, cs:...).
     // Used to override mode at +0x1A0 during AFK takeover call so the
