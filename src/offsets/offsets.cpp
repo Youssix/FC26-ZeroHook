@@ -27,6 +27,17 @@ uintptr_t     offsets::PlayerSideVTable   = 0;
 void*         offsets::FnPlayerSide       = nullptr;
 uintptr_t     offsets::MatchTimerVTable   = 0;
 void*         offsets::FnMatchTimer       = nullptr;
+void*         offsets::FnGetMatchCtx      = nullptr;
+void*         offsets::FnAiSlotResolver   = nullptr;
+void*         offsets::FnAiStateSync      = nullptr;
+void*         offsets::FnAfkTakeover      = nullptr;  // sub_1427F7640
+void*         offsets::FnAiTakeoverDispatch = nullptr; // sub_142812730
+uintptr_t     offsets::StateRootPtrAddr   = 0;        // &qword_14D895190
+uintptr_t     offsets::EAIDVTable        = 0;
+void*         offsets::FnEAID            = nullptr;
+void*         offsets::FnMismatchGate    = nullptr;  // sub_142825AC0
+void*         offsets::FnBaseHandler     = nullptr;  // sub_145096120
+void*         offsets::FnChecksumCheck   = nullptr;  // sub_1445C9CE0
 
 // ── Helpers ─────────────────────────────────────────────────────────
 namespace
@@ -243,6 +254,157 @@ bool offsets::Init()
         "[offsets] [8] %s MatchTimerVTable: %p  FnMatchTimer: %p\r\n",
         (MatchTimerVTable && FnMatchTimer) ? "OK" : "FAIL",
         (void*)MatchTimerVTable, FnMatchTimer);
+    log::debug(buf);
+
+    // ── 9. Match-ctx getter (sub_142805590) ────────────────────────
+    //   Body: mov rax,[global]; cmp byte-guard; cmovz rax,0;
+    //         mov rax,[rax+0x1080]; mov rax,[rax+0x130]; ret
+    //   Returns the live match_ctx pointer. We call this each send —
+    //   no more EPT AFK hook needed to capture context.
+    FnGetMatchCtx = game::pattern_scan(GameBase, GameSize,
+        "48 8B 05 ? ? ? ? 33 C9 38 0D ? ? ? ? 48 0F 44 C1 48 8B 80 80 10 00 00 48 8B 80 30 01 00 00 C3");
+    fmt::snprintf(buf, sizeof(buf),
+        "[offsets] [9] %s FnGetMatchCtx: %p\r\n",
+        FnGetMatchCtx ? "OK" : "FAIL", FnGetMatchCtx);
+    log::debug(buf);
+
+    // ── 10. AI slot resolver (sub_142329490) ───────────────────────
+    //   Prologue: xor eax,eax; mov r9d,edx; mov r10d,0xFFFFFFFF
+    //   Given (match_ctx, team_token) returns our field slot [0..21]
+    //   or 0xFFFFFFFF if not found. team_token must come from the
+    //   per-round table (not playerside) — see SendAiTakeover.
+    FnAiSlotResolver = game::pattern_scan(GameBase, GameSize,
+        "33 C0 44 8B CA 41 BA");
+    fmt::snprintf(buf, sizeof(buf),
+        "[offsets] [10] %s FnAiSlotResolver: %p\r\n",
+        FnAiSlotResolver ? "OK" : "FAIL", FnAiSlotResolver);
+    log::debug(buf);
+
+    // ── 11. AI state sync broadcast (sub_14282B1D0) ────────────────
+    //   Prologue distinctive: mov rax,rsp / mov [rax+18],rbx /
+    //   push rbp/rsi/rdi/r12/r13/r14/r15 / lea rbp,[rax-628] /
+    //   sub rsp,0x790 — a large-frame state builder that walks the
+    //   22-slot array at match_ctx+0x10 and broadcasts opcode
+    //   0x4E9507C9 with a 0x290-byte payload.
+    FnAiStateSync = game::pattern_scan(GameBase, GameSize,
+        "48 8B C4 48 89 58 18 55 56 57 41 54 41 55 41 56 41 57 48 8D A8 D8 F9 FF FF 48 81 EC 90 07 00 00");
+    fmt::snprintf(buf, sizeof(buf),
+        "[offsets] [11] %s FnAiStateSync: %p\r\n",
+        FnAiStateSync ? "OK" : "FAIL", FnAiStateSync);
+    log::debug(buf);
+
+    // ── 12. AFK takeover handler (sub_1427F7640) ───────────────────
+    //   Prologue: push rbp/rsi/rdi/r13; lea rbp,[rsp-0x3F];
+    //             sub rsp,0xC8; mov rax,cs:__security_cookie;
+    //             xor rax,rsp; mov [rbp+7],rax;
+    //             movsxd rsi,edx; movzx r13d,r8b
+    //   Distinctive because of the signed-extend of team_idx (edx) and
+    //   the sec-cookie dance right after the large stack allocation.
+    FnAfkTakeover = game::pattern_scan(GameBase, GameSize,
+        "40 55 56 57 41 55 48 8D 6C 24 C1 48 81 EC C8 00 00 00 48 8B 05 ? ? ? ? 48 33 C4 48 89 45 ? 48 63 F2 45 0F B6 E8");
+    fmt::snprintf(buf, sizeof(buf),
+        "[offsets] [12] %s FnAfkTakeover: %p\r\n",
+        FnAfkTakeover ? "OK" : "FAIL", FnAfkTakeover);
+    log::debug(buf);
+
+    // ── 12b. AI takeover dispatcher (sub_142812730) ────────────────
+    //   The canonical cursor/AI-controller state machine entry point.
+    //   Signature: (int mode, uint8_t ack) → __int64.
+    //     mode=0 → invokes sub_1427FD810 (AI takeover enabler, sets the
+    //              cursor-suppress latch at stateRoot+0x1AA8 and emits
+    //              the 4-cascade 0xA2CB726E peer notification)
+    //     mode=1..0x17 → activates cursor paths (do not use)
+    //   Prologue saves rbx/rbp, pushes rdi, sub rsp,0x20, loads state-root
+    //   via mov rbx, [rip+disp] (the qword_14D895190 ref).
+    FnAiTakeoverDispatch = game::pattern_scan(GameBase, GameSize,
+        "48 89 5C 24 10 48 89 6C 24 18 57 48 83 EC 20 48 8B 1D ? ? ? ? 33 C0 38 05");
+    fmt::snprintf(buf, sizeof(buf),
+        "[offsets] [12b] %s FnAiTakeoverDispatch: %p\r\n",
+        FnAiTakeoverDispatch ? "OK" : "FAIL", FnAiTakeoverDispatch);
+    log::debug(buf);
+
+    // ── 13. State-root pointer global (qword_14D895190) ────────────
+    //   First instruction of sub_142805590 is:
+    //     mov rax, cs:qword_14D895190    ; 48 8B 05 <rel32>
+    //   RIP-resolve the rel32 to get the global's address.
+    if (FnGetMatchCtx)
+    {
+        __try {
+            uintptr_t instr = (uintptr_t)FnGetMatchCtx;
+            // Instruction is 7 bytes: 48 8B 05 XX XX XX XX
+            // next_rip = instr + 7; disp32 at instr+3
+            int disp = *reinterpret_cast<int*>(instr + 3);
+            StateRootPtrAddr = instr + 7 + (intptr_t)disp;
+        } __except (1) {
+            StateRootPtrAddr = 0;
+        }
+    }
+    fmt::snprintf(buf, sizeof(buf),
+        "[offsets] [13] %s StateRootPtrAddr: %p\r\n",
+        StateRootPtrAddr ? "OK" : "FAIL", (void*)StateRootPtrAddr);
+    log::debug(buf);
+
+    // ── 14. EAID vtable (vtable[23]) ─────────────────────────────────
+    //   Pattern: LEA RAX,[rip+vtable]; xor edi,edi; mov [rbx],rax;
+    //   LEA RAX,[rip+vtable2]; mov [rbx+28h],rax; LEA RAX,...
+    log::debug("[offsets] [14] EAID vtable pattern scan...\r\n");
+    void* eaidMatch = game::pattern_scan(GameBase, GameSize,
+        "48 8D 05 ? ? ? ? 31 FF 48 89 03 48 8D 05 ? ? ? ? 48 89 43 ? 48 8D 05");
+    if (eaidMatch)
+    {
+        __try {
+            uintptr_t vtableAddr = resolve_rip((uintptr_t)eaidMatch, 3, 7);
+            if (vtableAddr && is_canonical(vtableAddr))
+            {
+                EAIDVTable = vtableAddr;
+                void** vtable = (void**)vtableAddr;
+                FnEAID = vtable[23];
+            }
+        } __except (1) {
+            log::debug("[offsets] [14] EXCEPTION resolving EAID vtable\r\n");
+        }
+    }
+    fmt::snprintf(buf, sizeof(buf),
+        "[offsets] [14] %s EAIDVTable: %p  FnEAID: %p\r\n",
+        (EAIDVTable && FnEAID) ? "OK" : "FAIL",
+        (void*)EAIDVTable, FnEAID);
+    log::debug(buf);
+
+    // ── 15. DataMismatch gate (sub_142825AC0) ──────────────────────────
+    //   Validates incoming 0xA2CB726E and 0x4E9507C9 packets. Returns 1
+    //   on structural mismatch → caller triggers DataMismatch DC.
+    //   Prologue: save RBX/RBP/RSI/RDI, push R12/R14/R15, sub rsp,0x1E0,
+    //   then `mov rax, [rcx+0x128]` (flag check). 39-byte unique pattern.
+    FnMismatchGate = game::pattern_scan(GameBase, GameSize,
+        "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 54 41 56 41 57 48 81 EC E0 01 00 00 48 8B 81 28 01 00 00");
+    fmt::snprintf(buf, sizeof(buf),
+        "[offsets] [15] %s FnMismatchGate: %p\r\n",
+        FnMismatchGate ? "OK" : "FAIL", FnMismatchGate);
+    log::debug(buf);
+
+    // ── 16. Base message pre-processor (sub_145096120) ─────────────────
+    //   Called as tail-call from FnMismatchGate when validation passes.
+    //   We call it directly from our hook to bypass validation.
+    //   Prologue: save RBP/RSI/RDI, push R14, sub rsp,0x40, then a
+    //   `cmp qword [rcx+0xF8], 0` — unique 31-byte pattern.
+    FnBaseHandler = game::pattern_scan(GameBase, GameSize,
+        "48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 56 48 83 EC 40 48 83 B9 F8 00 00 00 00 49 8B F1");
+    fmt::snprintf(buf, sizeof(buf),
+        "[offsets] [16] %s FnBaseHandler: %p\r\n",
+        FnBaseHandler ? "OK" : "FAIL", FnBaseHandler);
+    log::debug(buf);
+
+    // ── 17. Physics-sync checksum check (sub_1445C9CE0) ─────────────────
+    //   Compares local vs peer physics hash strings. Returns 1 on mismatch
+    //   → caller routes to DC submission. We hook to force return 0 always.
+    //   Prologue: save RBX/R12, push RBP/R14/R15, lea rbp,[rsp-0x47],
+    //   sub rsp,0x90, then `cmp byte [rdx+0x28], 0` (ready-flag check).
+    //   40-byte unique pattern.
+    FnChecksumCheck = game::pattern_scan(GameBase, GameSize,
+        "48 89 5C 24 18 4C 89 64 24 20 55 41 56 41 57 48 8D 6C 24 B9 48 81 EC 90 00 00 00 80 7A 28 00 4D 8B E1 4D 8B F0 48 8B DA");
+    fmt::snprintf(buf, sizeof(buf),
+        "[offsets] [17] %s FnChecksumCheck: %p\r\n",
+        FnChecksumCheck ? "OK" : "FAIL", FnChecksumCheck);
     log::debug(buf);
 
     log::debug("[offsets] Init complete\r\n");

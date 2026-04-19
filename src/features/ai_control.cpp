@@ -117,13 +117,13 @@ namespace
         return ctx + (alt ? 0x2570 : 0x10);
     }
 
-    // Write the AI marker into the slot's controller field (controllerIndex at +0x8).
+    // Write the AI marker into the slot's controller field (controllerIndex at +0x08).
     bool WriteLocalAiMarker(uintptr_t ctx, uint32_t field_slot, uint32_t& savedCtrlId)
     {
         if (field_slot > 21) return false;
         __try {
             uintptr_t slotAddr = SlotArrayBase(ctx) + 0x1A0ULL * field_slot;
-            uint32_t* pCtrlId  = reinterpret_cast<uint32_t*>(slotAddr + 0x8);
+            uint32_t* pCtrlId  = reinterpret_cast<uint32_t*>(slotAddr + 0x08);
             savedCtrlId = *pCtrlId;
             *pCtrlId = 0xFFFFFFFF;
             return true;
@@ -242,37 +242,45 @@ namespace
     // RetAddr 0x14566B349, zero in all 3 cheat logs).
     bool ApplyAiTakeoverCaptain(uintptr_t ctx, const char* label)
     {
-        uint32_t captain_slot = 0xFFFFFFFFu, team_token = 0xFFFFFFFFu;
-        if (!ResolveOurCaptainSlot(ctx, captain_slot, team_token)) {
-            log::debug("[AI] captain resolve failed\r\n");
+        // MINIMAL TEST — write exactly ONE byte.
+        //
+        // IDA decomp of sub_1427FD810 (at 0x1427FD810) shows its first action
+        // after the entry gate is:
+        //     *(BYTE*)(a1 + 0x1AA8) = 1;
+        // where a1 is the state-root object (dereffed from qword_14D895190).
+        //
+        // We do not currently know what reads this byte or what behavior it
+        // changes. We are testing: does writing this single byte alone produce
+        // any observable effect (cursor, AI takeover, crash, nothing)?
+        //
+        // No other writes, no spoof_calls, no packet emissions. Minimum viable
+        // experiment.
+        (void)ctx;
+
+        if (!offsets::StateRootPtrAddr) {
+            log::debug("[AI] StateRootPtrAddr missing\r\n");
             return false;
         }
 
-        uint32_t prev = 0;
-        bool localOk = WriteLocalAiMarker(ctx, captain_slot, prev);
-
-        bool syncOk = false;
-        if (localOk && offsets::FnAiStateSync) {
-            typedef void(__fastcall* sync_fn)(uintptr_t, uint32_t, int);
-            sync_fn fn = reinterpret_cast<sync_fn>(offsets::FnAiStateSync);
-            __try {
-                hook::g_allow_attack_send = true;
-                spoof_call(fn, (uint64_t)ctx, (uint32_t)captain_slot, (int)0);
-                hook::g_allow_attack_send = false;
-                syncOk = true;
-            } __except (EXCEPTION_EXECUTE_HANDLER) {
-                hook::g_allow_attack_send = false;
+        uintptr_t stateRoot = 0;
+        uint8_t prev = 0xFF;
+        bool wrote = false;
+        __try {
+            stateRoot = *(uintptr_t*)offsets::StateRootPtrAddr;
+            if (stateRoot) {
+                prev = *(uint8_t*)(stateRoot + 0x1AA8);
+                *(uint8_t*)(stateRoot + 0x1AA8) = 1;
+                wrote = true;
             }
-        }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
 
-        char buf[192];
+        char buf[160];
         fmt::snprintf(buf, sizeof(buf),
-            "[AI] %s captain slot=%u token=%08X prev=%08X local=%d sync=%d\r\n",
-            label, captain_slot, team_token, prev,
-            localOk ? 1 : 0, syncOk ? 1 : 0);
+            "[AI] %s stateRoot=%p +0x1AA8 prev=%02X wrote=%d\r\n",
+            label, (void*)stateRoot, (unsigned)prev, wrote ? 1 : 0);
         log::debug(buf);
 
-        return localOk && syncOk;
+        return wrote;
     }
 }
 

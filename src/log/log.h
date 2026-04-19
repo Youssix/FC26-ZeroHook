@@ -1,8 +1,8 @@
 #pragma once
 #include <Windows.h>
 
-// Set to true to enable verbose address/offset logging (for dev only)
-inline constexpr bool g_debugLog = false;
+inline constexpr bool g_debugLog = true;
+
 
 namespace log
 {
@@ -26,6 +26,11 @@ namespace log
 
     inline void to_file(const char* msg)
     {
+        // Gate at the lowest level: nothing gets written (and the file never
+        // gets created) unless g_debugLog is on. All callers — including the
+        // EPT install helpers that used to bypass log::debug — are silenced.
+        if (!g_debugLog) return;
+
         static bool s_firstCall = true;
         DWORD access = FILE_APPEND_DATA;
         DWORD creation = OPEN_ALWAYS;
@@ -56,6 +61,6 @@ namespace log
 
     inline void debug(const char* msg)
     {
-        if (g_debugLog) to_file(msg);
+        to_file(msg);  // to_file already gates on g_debugLog
     }
 }

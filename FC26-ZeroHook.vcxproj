@@ -136,6 +136,8 @@
     <ClCompile Include="src\features\champions.cpp" />
     <ClCompile Include="src\features\opponent_info.cpp" />
     <ClCompile Include="src\features\ai_difficulty.cpp" />
+    <ClCompile Include="src\features\proclub.cpp" />
+    <ClCompile Include="src\features\ai_control.cpp" />
   </ItemGroup>
   <!-- ====== Header Files ====== -->
   <ItemGroup>
@@ -149,6 +151,8 @@
     <ClInclude Include="src\features\server.h" />
     <ClInclude Include="src\features\opponent_info.h" />
     <ClInclude Include="src\features\ai_difficulty.h" />
+    <ClInclude Include="src\features\proclub.h" />
+    <ClInclude Include="src\features\ai_control.h" />
     <ClInclude Include="src\features\sliders.h" />
     <ClInclude Include="src\game\game.h" />
     <ClInclude Include="src\hook\dxgi_hooks.h" />
@@ -156,6 +160,7 @@
     <ClInclude Include="src\hook\network_hooks.h" />
     <ClInclude Include="src\hook\reloc.h" />
     <ClInclude Include="src\input\frostbite_input.h" />
+    <ClInclude Include="src\log\breadcrumb.h" />
     <ClInclude Include="src\log\fmt.h" />
     <ClInclude Include="src\log\log.h" />
     <ClInclude Include="src\menu\custommenu.h" />

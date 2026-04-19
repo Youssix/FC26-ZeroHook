@@ -11,6 +11,7 @@
 #include "../menu/toast.h"
 #include "../log/log.h"
 #include "../log/fmt.h"
+#include "../log/breadcrumb.h"
 #include "../spoof/spoof_call.hpp"
 
 // ── Globals ─────────────────────────────────────────────────────────
@@ -446,6 +447,7 @@ namespace
         if ((unsigned int)a2 != 0x75AD)
             return 0;
 
+        breadcrumb::set("opp_info:match_found_enter");
         log::debug("[OPP] >>> MATCH FOUND (a2=0x75AD) <<<\r\n");
 
         // Clear previous data
@@ -459,7 +461,9 @@ namespace
             fmt::snprintf(buf, sizeof(buf), "[OPP] Calling func1 at %p\r\n", (void*)g_func1);
             log::debug(buf);
 
+            breadcrumb::set("opp_info:func1_pre");
             __int64 v18 = spoof_call(fn1);
+            breadcrumb::set("opp_info:func1_post");
 
             fmt::snprintf(buf, sizeof(buf), "[OPP] func1 returned v18=%p\r\n", (void*)v18);
             log::debug(buf);
@@ -467,7 +471,9 @@ namespace
             if (!v18) { log::debug("[OPP] v18 is NULL, aborting\r\n"); return 0; }
 
             // ── Step 2: get_object_result → dereference +0x838 ──────
+            breadcrumb::set("opp_info:get_object_result_pre");
             __int64 result2 = get_object_result();
+            breadcrumb::set("opp_info:get_object_result_post");
             if (!result2) { log::debug("[OPP] result2 is NULL, aborting\r\n"); return 0; }
 
             fmt::snprintf(buf, sizeof(buf), "[OPP] result2=%p, reading +0x838\r\n", (void*)result2);
@@ -486,7 +492,9 @@ namespace
             fmt::snprintf(buf, sizeof(buf), "[OPP] Calling func3(%p, %p)\r\n", (void*)inner, (void*)v18);
             log::debug(buf);
 
+            breadcrumb::set("opp_info:func3_pre");
             __int64 v19 = spoof_call(fn3, inner, v18);
+            breadcrumb::set("opp_info:func3_post");
 
             fmt::snprintf(buf, sizeof(buf), "[OPP] func3 returned v19=%p\r\n", (void*)v19);
             log::debug(buf);
@@ -537,11 +545,21 @@ namespace
                 opp_info::g_opponent.personaId, opp_info::g_opponent.nucleusId);
             log::debug(buf);
 
+            // Grep-friendly match-boundary marker — matches FC26-Internal's convention
+            // (hooks.cpp:1142 `[MatchFound] Oppponent Name : %s`). Use this line to
+            // segment logs: anything before the last [MatchFound] belongs to a prior
+            // session and can be discarded when analyzing the current match.
+            fmt::snprintf(buf, sizeof(buf),
+                "[MatchFound] Opponent Name : %s\r\n", opp_info::g_opponent.name);
+            log::debug(buf);
+
             opp_info::g_opponent.valid = true;
 
         } __except (1) {
+            breadcrumb::set("opp_info:EXCEPTION_in_body");
             log::debug("[OPP] EXCEPTION during opponent info extraction\r\n");
         }
+        breadcrumb::set("opp_info:match_found_exit");
 
         // ── Step 5: Match type + stats (toggleable — can crash for some users) ──
         if (opp_info::g_enableStats) {

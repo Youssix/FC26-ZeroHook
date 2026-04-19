@@ -1,4 +1,5 @@
 #include "custommenu.h"
+#include "../input/frostbite_input.h"
 #include "../log/fmt.h"
 #include <intrin.h>
 
@@ -896,19 +897,102 @@ bool Menu::InputText(const char* label, char* buffer, int bufferSize) {
 	bool isHover = m_input.IsInRect(inputX, y, inputW, h);
 	if (isHover) SetHot(id);
 
+	bool focused = IsActive(id);
+
+	// Click to focus / click outside to unfocus
+	if (isHover && m_input.mouseClicked)
+		SetActive(id);
+	else if (!isHover && m_input.mouseClicked && focused)
+		ClearActive();
+
+	// Keyboard input when focused
+	bool changed = false;
+	if (focused)
+	{
+		int len = 0;
+		while (len < bufferSize - 1 && buffer[len]) len++;
+
+		// Backspace
+		if (FrostbiteInput::WasVKeyPressed(VK_BACK) && len > 0)
+		{
+			buffer[--len] = '\0';
+			changed = true;
+		}
+
+		// Escape / Enter → unfocus
+		if (FrostbiteInput::WasVKeyPressed(VK_ESCAPE) ||
+			FrostbiteInput::WasVKeyPressed(VK_RETURN))
+		{
+			ClearActive();
+		}
+
+		bool shift = FrostbiteInput::IsVKeyDown(VK_SHIFT);
+
+		// A-Z
+		for (int vk = 'A'; vk <= 'Z' && len < bufferSize - 1; vk++)
+		{
+			if (FrostbiteInput::WasVKeyPressed(vk))
+			{
+				buffer[len++] = shift ? (char)vk : (char)(vk + 32);
+				buffer[len] = '\0';
+				changed = true;
+			}
+		}
+
+		// 0-9
+		for (int vk = '0'; vk <= '9' && len < bufferSize - 1; vk++)
+		{
+			if (FrostbiteInput::WasVKeyPressed(vk))
+			{
+				buffer[len++] = (char)vk;
+				buffer[len] = '\0';
+				changed = true;
+			}
+		}
+
+		// Space, minus/underscore, period
+		if (len < bufferSize - 1 && FrostbiteInput::WasVKeyPressed(VK_SPACE))
+		{
+			buffer[len++] = ' ';
+			buffer[len] = '\0';
+			changed = true;
+		}
+		if (len < bufferSize - 1 && FrostbiteInput::WasVKeyPressed(VK_OEM_MINUS))
+		{
+			buffer[len++] = shift ? '_' : '-';
+			buffer[len] = '\0';
+			changed = true;
+		}
+		if (len < bufferSize - 1 && FrostbiteInput::WasVKeyPressed(VK_OEM_PERIOD))
+		{
+			buffer[len++] = '.';
+			buffer[len] = '\0';
+			changed = true;
+		}
+	}
+
 	// Label
 	DrawText(m_contentX, y + (h - 16) / 2, label, Colors::TextSecondary);
 
-	// Input box
-	Color bgColor = isHover ? Colors::SurfaceHover : Colors::Surface;
+	// Input box — highlight when focused
+	Color bgColor = focused ? Color{0.08f, 0.12f, 0.20f, 1.0f}
+	               : isHover ? Colors::SurfaceHover : Colors::Surface;
+	Color borderColor = focused ? Colors::PrimaryGlow
+	                  : isHover ? Colors::Primary : Colors::Border;
 	DrawRect(inputX, y, inputW, h, bgColor);
-	DrawRectOutline(inputX, y, inputW, h, 1, isHover ? Colors::Primary : Colors::Border);
+	DrawRectOutline(inputX, y, inputW, h, 1, borderColor);
 
-	// Text
+	// Text + blinking cursor when focused
 	DrawText(inputX + 10, y + (h - 16) / 2, buffer, Colors::Text);
+	if (focused)
+	{
+		float textW = MeasureText(buffer);
+		float cursorX = inputX + 10 + textW + 2;
+		DrawRect(cursorX, y + 6, 1, h - 12, Colors::Text);
+	}
 
 	AdvanceCursor(h);
-	return false;
+	return changed;
 }
 
 void Menu::StatusIndicator(const char* label, bool active, const char* tooltip) {

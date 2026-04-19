@@ -459,8 +459,37 @@ namespace reloc
             }
             else if (actual_op == 0xE8)
             {
-                // CALL rel32 — complex to relocate, bail for now
-                return result;
+                // CALL rel32 → absolute indirect CALL + inline target.
+                //
+                // Trampoline is in PML4[128] (~70TB from the module), so we can't
+                // keep a rel32 CALL — convert to `call qword ptr [rip+2]` with the
+                // absolute target stored in 8 bytes right after a 2-byte JMP that
+                // steps over them.
+                //
+                //   FF 15 02 00 00 00        ; call qword ptr [rip+2]     (6 bytes)
+                //   EB 08                     ; jmp +8 (skip abs target)  (2 bytes)
+                //   <8 bytes abs_target>                                   (8 bytes)
+                // Total: 16 bytes.
+                //
+                // When executed:
+                //   1. CALL pushes return = dst+6, jumps to *(dst+8) = abs_target
+                //   2. Callee RETs → returns to dst+6 (the JMP +8)
+                //   3. JMP lands at dst+16 (just past the 8-byte target literal)
+                //   4. Execution continues with the next relocated instruction.
+                int32_t rel32 = *reinterpret_cast<const int32_t*>(p + 1);
+                uint64_t abs_target = target_va + src_off + len + rel32;
+
+                result.bytes[dst_off + 0] = 0xFF;
+                result.bytes[dst_off + 1] = 0x15;
+                *reinterpret_cast<uint32_t*>(result.bytes + dst_off + 2) = 2u;
+
+                result.bytes[dst_off + 6] = 0xEB;
+                result.bytes[dst_off + 7] = 0x08;
+
+                *reinterpret_cast<uint64_t*>(result.bytes + dst_off + 8) = abs_target;
+
+                dst_off += 16;
+                src_off += len;
             }
             else
             {

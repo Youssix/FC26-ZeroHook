@@ -14,6 +14,8 @@
 #include "../features/champions.h"
 #include "../features/opponent_info.h"
 #include "../features/ai_difficulty.h"
+#include "../features/proclub.h"
+#include "../features/ai_control.h"
 #include "../log/fmt.h"
 #include "../log/log.h"
 #include "../renderer/renderer.h"
@@ -198,6 +200,10 @@ void overlay::Init(D3D12Renderer* renderer)
             log::debug("[OVL-INIT] opp_info::Init...\r\n");
             __try { opp_info::Init(offsets::GameBase, offsets::GameSize); }
             __except (1) { log::debug("[OVL-INIT] EXCEPTION in opp_info::Init\r\n"); }
+
+            log::debug("[OVL-INIT] proclub::Init...\r\n");
+            __try { proclub::Init(offsets::GameBase, offsets::GameSize); }
+            __except (1) { log::debug("[OVL-INIT] EXCEPTION in proclub::Init\r\n"); }
         } else {
             log::debug("[OVL-INIT] SKIP feature inits — GameBase/GameSize are NULL\r\n");
         }
@@ -239,6 +245,10 @@ void overlay::Frame(float screenW, float screenH)
 
     if (s_first) log::debug("[OVL] CheckHotkeys\r\n");
     menu::CheckHotkeys();
+
+    // Per-frame: apply Pro Club Search Alone EPT patch on toggle change
+    __try { proclub::Update(); }
+    __except (1) { if (s_first) log::debug("[OVL] EXCEPTION in proclub::Update\r\n"); }
 
     // Menu toggle — manual edge detect (FC26 pattern)
     {
@@ -495,9 +505,6 @@ void overlay::Frame(float screenW, float screenH)
 
                 static bool matchTypeSpoof = false;
                 CustomMenu::g_menu.Toggle("WL -> Draft Matchmaking", &matchTypeSpoof);
-
-                static bool spoofEAID = false;
-                CustomMenu::g_menu.Toggle("Spoof EAID", &spoofEAID);
 
                 CustomMenu::g_menu.Label("Requires hooks -- not yet active", CustomMenu::Colors::Warning);
                 CustomMenu::g_menu.EndSection();
@@ -824,9 +831,9 @@ void overlay::Frame(float screenW, float screenH)
             if (CustomMenu::g_menu.BeginSection("AI Control"))
             {
                 CustomMenu::g_menu.Toggle("AI vs Opponents", &g_aiVsOpps,
-                    "Take control of AI teammates to attack opponents");
+                    "Let AI control your whole team (auto-play, all 11 slots)");
                 CustomMenu::g_menu.Toggle("Disable Opponent AI", &g_disableAi,
-                    "Remove AI control from opponent team");
+                    "Let AI control opponent's whole team (all 11 slots)");
                 CustomMenu::g_menu.EndSection();
             }
 #endif
@@ -883,19 +890,45 @@ void overlay::Frame(float screenW, float screenH)
             if (CustomMenu::g_menu.BeginSection("Pro Club Features"))
             {
                 static bool unlockAll = false;
-                static bool xpBoost = false;
-                static bool skills99 = false;
                 static bool botFiveStars = false;
                 static bool aiAutoPlay = false;
                 static bool proFreeFacilities = false;
-                static bool proSearchAlone = false;
                 CustomMenu::g_menu.Toggle("Unlock All", &unlockAll);
-                CustomMenu::g_menu.Toggle("XP Boost", &xpBoost);
-                CustomMenu::g_menu.Toggle("Skills 99", &skills99);
+                CustomMenu::g_menu.Toggle("XP Boost",
+                    &proclub::g_xpBoost,
+                    proclub::g_xpBoostReady
+                        ? "10x XP multiplier"
+                        : "Pattern not found — feature unavailable");
+                CustomMenu::g_menu.Toggle("Skills 99",
+                    &proclub::g_skills99,
+                    proclub::g_skills99Ready
+                        ? "Forces all skill bytes to 99"
+                        : "Pattern not found — feature unavailable");
                 CustomMenu::g_menu.Toggle("Bot 5 Stars", &botFiveStars);
                 CustomMenu::g_menu.Toggle("AI Auto Play", &aiAutoPlay);
                 CustomMenu::g_menu.Toggle("Free Facilities", &proFreeFacilities);
-                CustomMenu::g_menu.Toggle("Search Game Alone", &proSearchAlone);
+                CustomMenu::g_menu.Toggle("Tournament Spoofer",
+                    &proclub::g_tournamentSpoof,
+                    proclub::g_tournamentSpoofReady
+                        ? "Spoofs tournament to Round of 16"
+                        : "Pattern not found — feature unavailable");
+                CustomMenu::g_menu.Toggle("Search Game Alone",
+                    &proclub::g_searchAlone,
+                    proclub::g_searchAloneReady
+                        ? "Allows searching for Pro Club games solo"
+                        : "Pattern not found — feature unavailable");
+                CustomMenu::g_menu.EndSection();
+            }
+
+            if (CustomMenu::g_menu.BeginSection("EAID Spoofer"))
+            {
+                CustomMenu::g_menu.Toggle("Spoof EAID",
+                    &proclub::g_spoofEAID,
+                    "Changes your EA ID display");
+                if (proclub::g_spoofEAID)
+                    CustomMenu::g_menu.InputText("Custom EAID",
+                        proclub::g_spoofEAIDText,
+                        sizeof(proclub::g_spoofEAIDText));
                 CustomMenu::g_menu.EndSection();
             }
 
@@ -1082,8 +1115,7 @@ void overlay::Frame(float screenW, float screenH)
             {
                 CustomMenu::g_menu.SliderFloat("Opacity", &menu::menuOpacity, 0.1f, 1.0f);
                 CustomMenu::g_menu.SetOpacity(menu::menuOpacity);
-                static bool showNotifications = true;
-                CustomMenu::g_menu.Toggle("Show Notifications", &showNotifications);
+                CustomMenu::g_menu.Toggle("Show Notifications", &toast::g_enabled);
                 CustomMenu::g_menu.EndSection();
             }
         }
@@ -1226,58 +1258,17 @@ void overlay::Frame(float screenW, float screenH)
         } __except(1) {}
     }
 
-    // ── AI vs Opponents: send player control assignment every ~3 seconds ──
-    static DWORD lastAiSend = 0;
-    if (g_aiVsOpps && g_rageReady && rage::slider_ptr)
+    // ── AI vs Opps / Disable Opponent AI ──
+    // One-shot per match. SendAiTakeover self-gates: no-op until MatchTimer
+    // arms g_kickoffArmed AND until the one-shot latch g_aiTakeoverFired
+    // clears at match-ended. Called every overlay frame; almost always a
+    // cheap early-return.
+    if (g_aiVsOpps || g_disableAi)
     {
-        DWORD now = GetTickCount();
-        if (now - lastAiSend > 3000) {
-            lastAiSend = now;
-            __try {
-                uintptr_t rcx = 0; rage::dispatch_fn_t fn = nullptr;
-                if (rage::get_dispatch(rcx, fn)) {
-                    uint64_t opcode = 0xA2CB726E;
-                    int ourSide = sliders::playerside;
-
-                    for (int i = 2; i < 12; i++) {
-                        unsigned int buffer[3] = { (unsigned int)ourSide, (unsigned int)i, 0 };
-
-                        hook::g_allow_attack_send = true;
-                        spoof_call(fn, (uint64_t)rcx,
-                            (uint64_t*)&opcode, (uint64_t*)&opcode,
-                            (void*)buffer, (int)12, (char)0xFF, (unsigned char)0);
-                        hook::g_allow_attack_send = false;
-                    }
-                }
-            } __except(1) {}
-        }
-    }
-
-    // ── Disable Opponent AI: send control assignment for opponent team ──
-    static DWORD lastDisableAiSend = 0;
-    if (g_disableAi && g_rageReady && rage::slider_ptr)
-    {
-        DWORD now2 = GetTickCount();
-        if (now2 - lastDisableAiSend > 3000) {
-            lastDisableAiSend = now2;
-            __try {
-                uintptr_t rcx = 0; rage::dispatch_fn_t fn = nullptr;
-                if (rage::get_dispatch(rcx, fn)) {
-                    uint64_t opcode = 0xA2CB726E;
-                    int oppSide = (sliders::playerside == 0) ? 1 : 0;
-
-                    for (int i = 2; i < 12; i++) {
-                        unsigned int buffer[3] = { (unsigned int)oppSide, (unsigned int)i, 0 };
-
-                        hook::g_allow_attack_send = true;
-                        spoof_call(fn, (uint64_t)rcx,
-                            (uint64_t*)&opcode, (uint64_t*)&opcode,
-                            (void*)buffer, (int)12, (char)0xFF, (unsigned char)0);
-                        hook::g_allow_attack_send = false;
-                    }
-                }
-            } __except(1) {}
-        }
+        __try {
+            if (g_aiVsOpps)  ai_control::SendAiTakeover();
+            if (g_disableAi) ai_control::SendDisableOpponentAi();
+        } __except (1) {}
     }
 
     // ── Toast notifications (always rendered, even if menu is closed) ──

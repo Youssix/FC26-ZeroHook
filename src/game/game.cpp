@@ -1,4 +1,5 @@
 #include "game.h"
+#include "../comms/comms.h"
 #include "../log/log.h"
 #include "../log/fmt.h"
 
@@ -142,4 +143,60 @@ game::ModuleInfo game::find_module()
         entry = entry->Flink;
     }
     return { nullptr, 0 };
+}
+
+void* game::find_code_cave(void* base, unsigned long size,
+                           int minBytes, int payloadBytes)
+{
+    // Bump allocator: never return the same cave twice
+    static uintptr_t s_nextFree = 0;
+
+    unsigned char* start = (unsigned char*)base;
+    unsigned char* end   = start + size;
+
+    // Resume past previously allocated caves
+    if (s_nextFree > (uintptr_t)start && s_nextFree < (uintptr_t)end)
+        start = (unsigned char*)s_nextFree;
+
+    for (unsigned char* p = start; p + minBytes <= end; p++)
+    {
+        unsigned char fill = p[0];
+        if (fill != 0xCC && fill != 0x00) continue;
+
+        bool ok = true;
+        for (int j = 1; j < minBytes; j++)
+        {
+            if (p[j] != fill) { ok = false; p += j; break; }
+        }
+        if (!ok) continue;
+
+        unsigned int pageOff = (unsigned int)((uintptr_t)p & 0xFFF);
+        if (pageOff + payloadBytes > 0x1000) continue;
+
+        // Advance past this cave so the next caller gets a different one
+        s_nextFree = (uintptr_t)p + minBytes;
+        return p;
+    }
+    return nullptr;
+}
+
+bool game::ept_patch(uintptr_t addr, const unsigned char* bytes, int size)
+{
+    unsigned int offset = (unsigned int)(addr & 0xFFF);
+    if (offset + (unsigned int)size > 0x1000)
+        return false;
+
+    ept_patch_bytes_params_t params = {};
+    params.patch_offset = offset;
+    params.patch_size   = (unsigned int)size;
+    for (int i = 0; i < size && i < 64; i++)
+        params.patch_bytes[i] = bytes[i];
+
+    implant_request_t req = {};
+    req.command = CMD_EPT_PATCH_BYTES;
+    req.param1  = (unsigned long long)addr;
+    req.param2  = (unsigned long long)&params;
+    ntclose_syscall(NTCLOSE_MAGIC, (unsigned long long)&req);
+
+    return (req.status == 0 && req.result == 1);
 }

@@ -49,7 +49,7 @@ namespace fmt
         }
     }
 
-    // Minimal snprintf: %s %p %u %d %x %X %lu %lX %llu %llX %02X %%
+    // Minimal snprintf: %s %p %u %d %x %X %lu %lX %llu %llX %02X %016llX %%
     inline int snprintf(char* buf, int max, const char* format, ...)
     {
         va_list args;
@@ -68,8 +68,8 @@ namespace fmt
             int width = 0;
             bool zero_pad = false;
             if (*p == '0') { zero_pad = true; p++; }
-            if (*p >= '1' && *p <= '9') { width = *p - '0'; p++; }
-            else if (zero_pad && *p >= '1' && *p <= '9') { width = *p - '0'; p++; }
+            if (*p >= '1' && *p <= '9') { width = *p - '0'; p++; if (*p >= '0' && *p <= '9') { width = width * 10 + (*p - '0'); p++; } }
+            else if (zero_pad && *p >= '1' && *p <= '9') { width = *p - '0'; p++; if (*p >= '0' && *p <= '9') { width = width * 10 + (*p - '0'); p++; } }
             (void)zero_pad; // width already implies zero-pad for hex
 
             // length modifier

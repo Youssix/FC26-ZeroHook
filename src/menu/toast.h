@@ -29,9 +29,15 @@ namespace toast
 
     inline Entry g_toasts[MAX_TOASTS] = {};
 
+    // Master on/off switch — menu toggle "Show Notifications" binds to this.
+    // Every toast::Show call honors it; no per-site gating needed.
+    inline bool g_enabled = true;
+
     // ── Push a toast ──
     inline void Show(Type type, const char* msg)
     {
+        if (!g_enabled) return;
+
         // Find a free slot, or overwrite the oldest
         int slot = -1;
         float oldest = 0;

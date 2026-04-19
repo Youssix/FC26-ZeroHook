@@ -81,7 +81,8 @@ namespace
 
         // ── TEMP DIAGNOSTIC: opcode census for AI-takeover design ────
         // Logs incoming opcodes with wall-clock timestamp + RetAddr + structured
-        // fields for 0xA2CB726E / 0x4E9507C9 + full hex dump for others.
+        // fields for 0xA2CB726E + header-only for 0x4E9507C9 (semantics unknown)
+        // + full hex dump for others.
         //
         // Filters out the top-4 high-frequency per-tick network-framing opcodes
         // (94% of raw traffic — pure framing, never event-relevant):
@@ -132,10 +133,12 @@ namespace
                     "[Opcode 0xA2CB726E] Team=0x%08X Player=%u Slot=0x%02X Buf[2]=0x%08X Param7=%d RetAddr=%016llX\r\n",
                     team, player, (unsigned char)a6, b2, a7, retAddr);
             }
-            // Special-case 0x4E9507C9 — state-sync, large payload
+            // Special-case 0x4E9507C9 — structured header only. Purpose unknown;
+            // we observed it co-emits with 0xA2CB726E cascades but have NOT
+            // reverse-engineered its payload format or semantics.
             else if (op2_log == 0x4E9507C9 || op3_log == 0x4E9507C9) {
                 pos += fmt::snprintf(lb + pos, sizeof(lb) - pos,
-                    "[Opcode 0x4E9507C9] sz=%d Slot=0x%02X Param7=%d RetAddr=%016llX (state-sync)\r\n",
+                    "[Opcode 0x4E9507C9] sz=%d Slot=0x%02X Param7=%d RetAddr=%016llX\r\n",
                     a5, (unsigned char)a6, a7, retAddr);
             }
             // Everything else: header + full hex dump (up to 128 bytes)
