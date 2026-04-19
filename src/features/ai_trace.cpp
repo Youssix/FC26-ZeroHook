@@ -96,6 +96,16 @@ namespace
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_lxSetIsIdle         = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_lxSetIsActive       = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_onlineCpuStateMachine = {};
+
+    // RELEASE / "give control back to human" side.
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_releaseSlot         = {};
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_releaseSlotWrap     = {};
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_teamRelease         = {};
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_playerReturned      = {};
+
+    // AFK detection / policy.
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_afkDecisionBrain    = {};
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_afkTakeover         = {};
 }
 
 // ── Detours (all return 0 = pass through; none mutate state) ─────────
@@ -279,6 +289,110 @@ extern "C" unsigned long long TraceHook_OnlineCpuStateMachine(
     return 0;
 }
 
+// ── RELEASE side (human takes back control) ─────────────────────────
+
+extern "C" unsigned long long TraceHook_ReleaseSlot(
+    void* ctx, unsigned long long a1, int a2)
+{
+    char extra[96];
+    fmt::snprintf(extra, sizeof(extra), "(matchCtx=%016llX slot=%d)", a1, a2);
+    emit_line("sub_142829430 RELEASE_SLOT", extra, ctx);
+    return 0;
+}
+
+extern "C" unsigned long long TraceHook_ReleaseSlotWrap(
+    void* ctx, unsigned long long a1, int a2)
+{
+    char extra[96];
+    fmt::snprintf(extra, sizeof(extra), "(a1=%016llX slot=%d)", a1, a2);
+    emit_line("sub_148AD3060 RELEASE_SLOT_WRAP", extra, ctx);
+    return 0;
+}
+
+// sub_1427FC0F0 — team-wide release state machine (mirror of sub_1427FA200).
+// Gate: matchCtx[0x2558] && matchCtx[0x4AD0] (AI was set AND gameplay active).
+// For each of OUR slots that aren't in AI state in the snapshot, calls
+// sub_142814510(sessionId, 0, 0, 1) — note first arg 0 = "no longer AI"
+// (takeover path uses 1). Clears matchCtx[0x2558].
+extern "C" unsigned long long TraceHook_TeamRelease(
+    void* ctx, unsigned long long a1)
+{
+    unsigned int aiLatch  = 0xFF;
+    unsigned int gameLive = 0xFF;
+    __try {
+        aiLatch  = *(unsigned char*)(a1 + 0x2558);
+        gameLive = *(unsigned char*)(a1 + 0x4AD0);
+    } __except (1) {}
+
+    char extra[128];
+    fmt::snprintf(extra, sizeof(extra),
+        "(matchCtx=%016llX aiLatch=%u gameLive=%u)", a1, aiLatch, gameLive);
+    emit_line("sub_1427FC0F0 TEAM_RELEASE", extra, ctx);
+    return 0;
+}
+
+// sub_142822CE0 — per-slot "player returned from AFK" (release companion).
+// Called by AFK brain when the idle timer hasn't expired OR when explicit
+// "user is back" event fires. Also called by sub_1427FA200 per-slot when
+// matchCtx[0x4CA1] is clear.
+extern "C" unsigned long long TraceHook_PlayerReturned(
+    void* ctx, unsigned long long a1, unsigned int a2)
+{
+    char extra[96];
+    fmt::snprintf(extra, sizeof(extra),
+        "(matchCtx=%016llX slot=%u)", a1, a2);
+    emit_line("sub_142822CE0 PLAYER_RETURNED", extra, ctx);
+    return 0;
+}
+
+// ── AFK detection / policy ──────────────────────────────────────────
+
+// sub_14282BB00 — THE AFK DECISION BRAIN. Queries three feature flags
+// (ONLINE/CPU_VS_CPU skip, ONLINE/NOIDLE skip, ONLINE/NOIDLEREMOVE policy)
+// and maintains per-slot idle timers at matchCtx[+0x4CD0..+0x4D40 + slot*128].
+// Routes to sub_1427F7640 (AFK takeover) when timer expires, or to
+// sub_142822CE0 (user returned) on the resume path. Hook this to see the
+// FULL decision tree per candidate event.
+extern "C" unsigned long long TraceHook_AfkDecisionBrain(
+    void* ctx, unsigned long long a1, unsigned int a2,
+    unsigned long long a3, unsigned long long a4, unsigned int a5)
+{
+    unsigned char latch2554 = 0xFF;
+    unsigned char latch2557 = 0xFF;
+    unsigned char idleTimer = 0xFF;
+    unsigned char idleActive= 0xFF;
+    __try {
+        latch2554  = *(unsigned char*)(a1 + 0x2554);  // takeover active
+        latch2557  = *(unsigned char*)(a1 + 0x2557);  // "already processing"
+        // Per-slot bitmap: 0x4CD0 = "already AI", 0x4CD1 = "idle timer running"
+        if (a2 < 22) {
+            idleTimer  = *(unsigned char*)(a1 + 0x4CD0 + (unsigned long long)a2 * 128);
+            idleActive = *(unsigned char*)(a1 + 0x4CD1 + (unsigned long long)a2 * 128);
+        }
+    } __except (1) {}
+
+    char extra[256];
+    fmt::snprintf(extra, sizeof(extra),
+        "(matchCtx=%016llX slot=%u a3=%016llX eventType=%u latch2554=%u latch2557=%u perslot_isAI=%u perslot_timerOn=%u)",
+        a1, a2, a3, a5, latch2554, latch2557, idleTimer, idleActive);
+    emit_line("sub_14282BB00 AFK_DECISION_BRAIN", extra, ctx);
+    return 0;
+}
+
+// sub_1427F7640 (FnAfkTakeover) — per-slot AFK takeover execution. Called
+// by the AFK decision brain once the idle timer has decided to flip a slot.
+extern "C" unsigned long long TraceHook_AfkTakeover(
+    void* ctx, unsigned long long a1, unsigned long long a2,
+    unsigned char a3, unsigned char a4)
+{
+    char extra[128];
+    fmt::snprintf(extra, sizeof(extra),
+        "(matchCtx=%016llX slot=%llu teamFlag=%u eventType=%u)",
+        a1, a2, (unsigned)a3, (unsigned)a4);
+    emit_line("sub_1427F7640 AFK_TAKEOVER", extra, ctx);
+    return 0;
+}
+
 // ── install_all ──────────────────────────────────────────────────────
 //
 // Every target has a known RVA from the IDA dump (imagebase 0x140000000),
@@ -369,6 +483,22 @@ void ai_trace::install_all()
           (void*)&TraceHook_LxSetIsActive,       &g_params_lxSetIsActive       },
         { "sub_1489A9CE0 ONLINE_CPU_STATE_MACHINE", 0x1489A9CE0ULL,
           (void*)&TraceHook_OnlineCpuStateMachine, &g_params_onlineCpuStateMachine },
+
+        // RELEASE side — symmetric to the activate primitives above.
+        { "sub_142829430 RELEASE_SLOT",         0x142829430ULL,
+          (void*)&TraceHook_ReleaseSlot,         &g_params_releaseSlot         },
+        { "sub_148AD3060 RELEASE_SLOT_WRAP",    0x148AD3060ULL,
+          (void*)&TraceHook_ReleaseSlotWrap,     &g_params_releaseSlotWrap     },
+        { "sub_1427FC0F0 TEAM_RELEASE",         0x1427FC0F0ULL,
+          (void*)&TraceHook_TeamRelease,         &g_params_teamRelease         },
+        { "sub_142822CE0 PLAYER_RETURNED",      0x142822CE0ULL,
+          (void*)&TraceHook_PlayerReturned,      &g_params_playerReturned      },
+
+        // AFK detection — the decision tree for natural idle-timeout takeover.
+        { "sub_14282BB00 AFK_DECISION_BRAIN",   0x14282BB00ULL,
+          (void*)&TraceHook_AfkDecisionBrain,    &g_params_afkDecisionBrain    },
+        { "sub_1427F7640 AFK_TAKEOVER",         0x1427F7640ULL,
+          (void*)&TraceHook_AfkTakeover,         &g_params_afkTakeover         },
     };
 
     for (const auto& t : targets) install_one(t);
