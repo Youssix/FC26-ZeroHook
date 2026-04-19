@@ -267,11 +267,16 @@ extern "C" unsigned long long TraceHook_CreatePlayerSwitch(
     return 0;
 }
 
-// sub_1489A9CE0 — the online/CPU takeover STATE MACHINE. This is the
-// function that queries "ONLINE_CPU_CONTROL" via sub_146549750 and, when
-// the flag is disabled, calls sub_1427FA200 / sub_1427FCBD0 directly. It
-// switches on a1[+0x44] (phase 0..6) — logging the phase per entry lets
-// us reconstruct the exact transition sequence around takeover.
+// sub_1489A9CE0 — the online/CPU takeover STATE MACHINE. Runs at ~60 Hz
+// (per-frame tick driver). CHANGE-DETECT: only log on phase/subArg
+// transition — previously emitted ~5k lines/min during a match and the
+// synchronous file I/O per tick stalled frames enough for the game's own
+// AFK detector to decide the user was idle. Never do per-frame file I/O.
+namespace
+{
+    volatile unsigned int g_lastCpuSmPhase  = 0xFFFFFFFE;
+    volatile unsigned int g_lastCpuSmSubArg = 0xFFFFFFFE;
+}
 extern "C" unsigned long long TraceHook_OnlineCpuStateMachine(
     void* ctx, unsigned long long a1)
 {
@@ -281,6 +286,12 @@ extern "C" unsigned long long TraceHook_OnlineCpuStateMachine(
         phase  = *(unsigned int*)(a1 + 0x44);
         subArg = *(unsigned int*)(a1 + 0x40);
     } __except (1) {}
+
+    // Fast-path: suppress identical repeats. Races are harmless (may log
+    // a dup once in a blue moon, never corruption).
+    if (phase == g_lastCpuSmPhase && subArg == g_lastCpuSmSubArg) return 0;
+    g_lastCpuSmPhase  = phase;
+    g_lastCpuSmSubArg = subArg;
 
     char extra[192];
     fmt::snprintf(extra, sizeof(extra),
@@ -348,28 +359,46 @@ extern "C" unsigned long long TraceHook_PlayerReturned(
 // ── AFK detection / policy ──────────────────────────────────────────
 
 // sub_14282BB00 — THE AFK DECISION BRAIN. Queries three feature flags
-// (ONLINE/CPU_VS_CPU skip, ONLINE/NOIDLE skip, ONLINE/NOIDLEREMOVE policy)
-// and maintains per-slot idle timers at matchCtx[+0x4CD0..+0x4D40 + slot*128].
-// Routes to sub_1427F7640 (AFK takeover) when timer expires, or to
-// sub_142822CE0 (user returned) on the resume path. Hook this to see the
-// FULL decision tree per candidate event.
+// and maintains per-slot idle timers. Runs ~60 Hz during gameplay (once
+// per slot per tick). CHANGE-DETECT per slot — only log when the 4-byte
+// state signature for that slot changes.
+namespace
+{
+    // Per-slot last-seen signature: 4 bytes packed into one uint32.
+    // Byte 0: latch2554, 1: latch2557, 2: perslot_isAI, 3: perslot_timerOn.
+    // Initial sentinel 0xFFFFFFFF guarantees first real sample logs.
+    volatile unsigned int g_lastAfkBrain[22] = {
+        0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu,
+        0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu,
+        0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu,
+        0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu
+    };
+}
 extern "C" unsigned long long TraceHook_AfkDecisionBrain(
     void* ctx, unsigned long long a1, unsigned int a2,
     unsigned long long a3, unsigned long long a4, unsigned int a5)
 {
+    if (a2 >= 22) return 0;  // out-of-range slot — safe skip
+
     unsigned char latch2554 = 0xFF;
     unsigned char latch2557 = 0xFF;
     unsigned char idleTimer = 0xFF;
     unsigned char idleActive= 0xFF;
     __try {
-        latch2554  = *(unsigned char*)(a1 + 0x2554);  // takeover active
-        latch2557  = *(unsigned char*)(a1 + 0x2557);  // "already processing"
-        // Per-slot bitmap: 0x4CD0 = "already AI", 0x4CD1 = "idle timer running"
-        if (a2 < 22) {
-            idleTimer  = *(unsigned char*)(a1 + 0x4CD0 + (unsigned long long)a2 * 128);
-            idleActive = *(unsigned char*)(a1 + 0x4CD1 + (unsigned long long)a2 * 128);
-        }
+        latch2554  = *(unsigned char*)(a1 + 0x2554);
+        latch2557  = *(unsigned char*)(a1 + 0x2557);
+        idleTimer  = *(unsigned char*)(a1 + 0x4CD0 + (unsigned long long)a2 * 128);
+        idleActive = *(unsigned char*)(a1 + 0x4CD1 + (unsigned long long)a2 * 128);
     } __except (1) {}
+
+    unsigned int sig = ((unsigned int)latch2554)
+                     | ((unsigned int)latch2557  << 8)
+                     | ((unsigned int)idleTimer  << 16)
+                     | ((unsigned int)idleActive << 24);
+
+    // Fast-path: suppress identical repeats for this slot.
+    if (sig == g_lastAfkBrain[a2]) return 0;
+    g_lastAfkBrain[a2] = sig;
 
     char extra[256];
     fmt::snprintf(extra, sizeof(extra),
@@ -379,12 +408,25 @@ extern "C" unsigned long long TraceHook_AfkDecisionBrain(
     return 0;
 }
 
-// sub_1427F7640 (FnAfkTakeover) — per-slot AFK takeover execution. Called
-// by the AFK decision brain once the idle timer has decided to flip a slot.
+// sub_1427F7640 (FnAfkTakeover) — per-slot AFK takeover execution.
+// CHANGE-DETECT: only log when (slot, teamFlag, eventType) differs from
+// last call. Fires per-frame once a slot enters AFK state — previously
+// emitted ~10 Hz of file I/O during a match.
+namespace
+{
+    volatile unsigned long long g_lastAfkTakeoverSig = 0xFFFFFFFFFFFFFFFFULL;
+}
 extern "C" unsigned long long TraceHook_AfkTakeover(
     void* ctx, unsigned long long a1, unsigned long long a2,
     unsigned char a3, unsigned char a4)
 {
+    unsigned long long sig = ((a2 & 0xFFFF) << 16)
+                           | ((unsigned long long)a3 << 8)
+                           | (unsigned long long)a4;
+
+    if (sig == g_lastAfkTakeoverSig) return 0;
+    g_lastAfkTakeoverSig = sig;
+
     char extra[128];
     fmt::snprintf(extra, sizeof(extra),
         "(matchCtx=%016llX slot=%llu teamFlag=%u eventType=%u)",
