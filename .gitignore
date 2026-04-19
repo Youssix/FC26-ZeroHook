@@ -25,3 +25,9 @@ ipch/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Log captures (analysis artifacts, not source)
+*.log
+
+# Local tool state
+.serena/
