@@ -84,28 +84,25 @@ void ai_trace::log_line(const char* msg) { write_trace(msg); }
 // ── EPT params (one page each; shared via __declspec(align(4096))) ───
 namespace
 {
+    // Active-path hooks (things that actually fire in-game).
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_afkDecisionBrain    = {};
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_afkTakeover         = {};
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_playerReturned      = {};
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_stateSync           = {};
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_resumeWrap          = {};
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_featureFlagGet      = {};
+
+    // Tripwires — zero hits so far but positioned to catch specific events.
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_takeoverActivate    = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_takeoverResume      = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_takeoverSlot        = {};
-    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_takeoverSlotWrap    = {};
-    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_pauseWrap           = {};
-    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_resumeWrap          = {};
-    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_featureFlagGet      = {};
-    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_stateSync           = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_createPlayerSwitch  = {};
-    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_lxSetIsIdle         = {};
-    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_lxSetIsActive       = {};
-    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_onlineCpuStateMachine = {};
 
-    // RELEASE / "give control back to human" side.
-    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_releaseSlot         = {};
-    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_releaseSlotWrap     = {};
-    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_teamRelease         = {};
-    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_playerReturned      = {};
-
-    // AFK detection / policy.
-    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_afkDecisionBrain    = {};
-    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_afkTakeover         = {};
+    // Removed: TakeoverSlotWrap, ReleaseSlotWrap, PauseWrap, LxSetIsIdle,
+    // LxSetIsActive, ReleaseSlot, TeamRelease, OnlineCpuStateMachine.
+    // All either thin wrappers over already-hooked functions, Lua-script
+    // only, or fire exclusively in menu/lobby (not the in-game AFK path
+    // we care about).
 }
 
 // ── Detours (all return 0 = pass through; none mutate state) ─────────
@@ -139,45 +136,6 @@ extern "C" unsigned long long TraceHook_TakeoverSlot(
     fmt::snprintf(extra, sizeof(extra),
         "(matchCtx=%016llX, slot=%d)", a1, a2);
     emit_line("sub_142814760 TAKEOVER_SLOT", extra, ctx);
-    return 0;
-}
-
-extern "C" unsigned long long TraceHook_TakeoverSlotWrap(
-    void* ctx, unsigned long long a1, int a2)
-{
-    char extra[96];
-    fmt::snprintf(extra, sizeof(extra), "(a1=%016llX slot=%d)", a1, a2);
-    emit_line("sub_148ACCB00 TAKEOVER_SLOT_WRAP", extra, ctx);
-    return 0;
-}
-
-extern "C" unsigned long long TraceHook_LxSetIsIdle(
-    void* ctx, unsigned long long a1, unsigned long long a2)
-{
-    char extra[96];
-    fmt::snprintf(extra, sizeof(extra),
-        "(a1=%016llX scriptState=%016llX)", a1, a2);
-    emit_line("sub_146F01F40 LX_SET_IS_IDLE_PLAYER", extra, ctx);
-    return 0;
-}
-
-extern "C" unsigned long long TraceHook_LxSetIsActive(
-    void* ctx, unsigned long long a1, unsigned long long a2)
-{
-    char extra[96];
-    fmt::snprintf(extra, sizeof(extra),
-        "(a1=%016llX scriptState=%016llX)", a1, a2);
-    emit_line("sub_146F04EA0 LX_SET_PLAYER_ACTIVE_USER", extra, ctx);
-    return 0;
-}
-
-extern "C" unsigned long long TraceHook_PauseWrap(
-    void* ctx, unsigned long long a1, unsigned long long a2)
-{
-    char extra[96];
-    fmt::snprintf(extra, sizeof(extra),
-        "(pauseCtx=%016llX a2=%016llX)", a1, a2);
-    emit_line("sub_148A9FEB0 PAUSE->TAKEOVER", extra, ctx);
     return 0;
 }
 
@@ -264,81 +222,6 @@ extern "C" unsigned long long TraceHook_CreatePlayerSwitch(
     fmt::snprintf(extra, sizeof(extra),
         "(a1=%016llX matchCtx=%016llX a3=%016llX)", a1, a2, a3);
     emit_line("sub_146E98A00 CREATE_PLAYER_SWITCH", extra, ctx);
-    return 0;
-}
-
-// sub_1489A9CE0 — the online/CPU takeover STATE MACHINE. Runs at ~60 Hz
-// (per-frame tick driver). CHANGE-DETECT: only log on phase/subArg
-// transition — previously emitted ~5k lines/min during a match and the
-// synchronous file I/O per tick stalled frames enough for the game's own
-// AFK detector to decide the user was idle. Never do per-frame file I/O.
-namespace
-{
-    volatile unsigned int g_lastCpuSmPhase  = 0xFFFFFFFE;
-    volatile unsigned int g_lastCpuSmSubArg = 0xFFFFFFFE;
-}
-extern "C" unsigned long long TraceHook_OnlineCpuStateMachine(
-    void* ctx, unsigned long long a1)
-{
-    unsigned int phase  = 0xFFFFFFFF;
-    unsigned int subArg = 0xFFFFFFFF;
-    __try {
-        phase  = *(unsigned int*)(a1 + 0x44);
-        subArg = *(unsigned int*)(a1 + 0x40);
-    } __except (1) {}
-
-    // Fast-path: suppress identical repeats. Races are harmless (may log
-    // a dup once in a blue moon, never corruption).
-    if (phase == g_lastCpuSmPhase && subArg == g_lastCpuSmSubArg) return 0;
-    g_lastCpuSmPhase  = phase;
-    g_lastCpuSmSubArg = subArg;
-
-    char extra[192];
-    fmt::snprintf(extra, sizeof(extra),
-        "(ctx=%016llX phase=%u subArg=%u)", a1, phase, subArg);
-    emit_line("sub_1489A9CE0 ONLINE_CPU_STATE_MACHINE", extra, ctx);
-    return 0;
-}
-
-// ── RELEASE side (human takes back control) ─────────────────────────
-
-extern "C" unsigned long long TraceHook_ReleaseSlot(
-    void* ctx, unsigned long long a1, int a2)
-{
-    char extra[96];
-    fmt::snprintf(extra, sizeof(extra), "(matchCtx=%016llX slot=%d)", a1, a2);
-    emit_line("sub_142829430 RELEASE_SLOT", extra, ctx);
-    return 0;
-}
-
-extern "C" unsigned long long TraceHook_ReleaseSlotWrap(
-    void* ctx, unsigned long long a1, int a2)
-{
-    char extra[96];
-    fmt::snprintf(extra, sizeof(extra), "(a1=%016llX slot=%d)", a1, a2);
-    emit_line("sub_148AD3060 RELEASE_SLOT_WRAP", extra, ctx);
-    return 0;
-}
-
-// sub_1427FC0F0 — team-wide release state machine (mirror of sub_1427FA200).
-// Gate: matchCtx[0x2558] && matchCtx[0x4AD0] (AI was set AND gameplay active).
-// For each of OUR slots that aren't in AI state in the snapshot, calls
-// sub_142814510(sessionId, 0, 0, 1) — note first arg 0 = "no longer AI"
-// (takeover path uses 1). Clears matchCtx[0x2558].
-extern "C" unsigned long long TraceHook_TeamRelease(
-    void* ctx, unsigned long long a1)
-{
-    unsigned int aiLatch  = 0xFF;
-    unsigned int gameLive = 0xFF;
-    __try {
-        aiLatch  = *(unsigned char*)(a1 + 0x2558);
-        gameLive = *(unsigned char*)(a1 + 0x4AD0);
-    } __except (1) {}
-
-    char extra[128];
-    fmt::snprintf(extra, sizeof(extra),
-        "(matchCtx=%016llX aiLatch=%u gameLive=%u)", a1, aiLatch, gameLive);
-    emit_line("sub_1427FC0F0 TEAM_RELEASE", extra, ctx);
     return 0;
 }
 
@@ -501,46 +384,30 @@ void ai_trace::install_all()
     log_line(hdr);
 
     const trace_target_t targets[] = {
+        // Active-path (in-game) — all protected with change-detect where
+        // they fire at frame rate.
+        { "sub_14282BB00 AFK_DECISION_BRAIN",   0x14282BB00ULL,
+          (void*)&TraceHook_AfkDecisionBrain,    &g_params_afkDecisionBrain    },
+        { "sub_1427F7640 AFK_TAKEOVER",         0x1427F7640ULL,
+          (void*)&TraceHook_AfkTakeover,         &g_params_afkTakeover         },
+        { "sub_142822CE0 PLAYER_RETURNED",      0x142822CE0ULL,
+          (void*)&TraceHook_PlayerReturned,      &g_params_playerReturned      },
+        { "sub_14282B1D0 STATE_SYNC",           0x14282B1D0ULL,
+          (void*)&TraceHook_StateSync,           &g_params_stateSync           },
+        { "sub_148A9FFA0 RESUME_WRAP",          0x148A9FFA0ULL,
+          (void*)&TraceHook_ResumeWrap,          &g_params_resumeWrap          },
+        { "sub_146549750 FEATURE_FLAG_GET",     0x146549750ULL,
+          (void*)&TraceHook_FeatureFlagGet,      &g_params_featureFlagGet      },
+
+        // Tripwires — only log when the specific event actually fires.
         { "sub_1427FA200 TAKEOVER_ACTIVATE",    0x1427FA200ULL,
           (void*)&TraceHook_TakeoverActivate,    &g_params_takeoverActivate    },
         { "sub_1427FCBD0 TAKEOVER_RESUME",      0x1427FCBD0ULL,
           (void*)&TraceHook_TakeoverResume,      &g_params_takeoverResume      },
         { "sub_142814760 TAKEOVER_SLOT",        0x142814760ULL,
           (void*)&TraceHook_TakeoverSlot,        &g_params_takeoverSlot        },
-        { "sub_148ACCB00 TAKEOVER_SLOT_WRAP",   0x148ACCB00ULL,
-          (void*)&TraceHook_TakeoverSlotWrap,    &g_params_takeoverSlotWrap    },
-        { "sub_148A9FEB0 PAUSE_WRAP",           0x148A9FEB0ULL,
-          (void*)&TraceHook_PauseWrap,           &g_params_pauseWrap           },
-        { "sub_148A9FFA0 RESUME_WRAP",          0x148A9FFA0ULL,
-          (void*)&TraceHook_ResumeWrap,          &g_params_resumeWrap          },
-        { "sub_146549750 FEATURE_FLAG_GET",     0x146549750ULL,
-          (void*)&TraceHook_FeatureFlagGet,      &g_params_featureFlagGet      },
-        { "sub_14282B1D0 STATE_SYNC",           0x14282B1D0ULL,
-          (void*)&TraceHook_StateSync,           &g_params_stateSync           },
         { "sub_146E98A00 CREATE_PLAYER_SWITCH", 0x146E98A00ULL,
           (void*)&TraceHook_CreatePlayerSwitch,  &g_params_createPlayerSwitch  },
-        { "sub_146F01F40 LX_SET_IS_IDLE_PLAYER", 0x146F01F40ULL,
-          (void*)&TraceHook_LxSetIsIdle,         &g_params_lxSetIsIdle         },
-        { "sub_146F04EA0 LX_SET_PLAYER_ACTIVE_USER", 0x146F04EA0ULL,
-          (void*)&TraceHook_LxSetIsActive,       &g_params_lxSetIsActive       },
-        { "sub_1489A9CE0 ONLINE_CPU_STATE_MACHINE", 0x1489A9CE0ULL,
-          (void*)&TraceHook_OnlineCpuStateMachine, &g_params_onlineCpuStateMachine },
-
-        // RELEASE side — symmetric to the activate primitives above.
-        { "sub_142829430 RELEASE_SLOT",         0x142829430ULL,
-          (void*)&TraceHook_ReleaseSlot,         &g_params_releaseSlot         },
-        { "sub_148AD3060 RELEASE_SLOT_WRAP",    0x148AD3060ULL,
-          (void*)&TraceHook_ReleaseSlotWrap,     &g_params_releaseSlotWrap     },
-        { "sub_1427FC0F0 TEAM_RELEASE",         0x1427FC0F0ULL,
-          (void*)&TraceHook_TeamRelease,         &g_params_teamRelease         },
-        { "sub_142822CE0 PLAYER_RETURNED",      0x142822CE0ULL,
-          (void*)&TraceHook_PlayerReturned,      &g_params_playerReturned      },
-
-        // AFK detection — the decision tree for natural idle-timeout takeover.
-        { "sub_14282BB00 AFK_DECISION_BRAIN",   0x14282BB00ULL,
-          (void*)&TraceHook_AfkDecisionBrain,    &g_params_afkDecisionBrain    },
-        { "sub_1427F7640 AFK_TAKEOVER",         0x1427F7640ULL,
-          (void*)&TraceHook_AfkTakeover,         &g_params_afkTakeover         },
     };
 
     for (const auto& t : targets) install_one(t);
