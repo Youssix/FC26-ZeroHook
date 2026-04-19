@@ -70,6 +70,15 @@ namespace offsets
     // Calling with mode!=0 activates cursor paths instead — avoid.
     extern void* FnAiTakeoverDispatch; // sub_142812730
 
+    // sub_1427FD810 — the AI-takeover enabler called from FnAiTakeoverDispatch
+    // on the mode=0 path. Signature: (match_ctx*, int mode, u8 ack) → char.
+    // Writes ctx[0x1AB0]=mode, ctx[0x1AA8]=1, ctx[0x1AB5]=0, ctx[0x14C]=-1,
+    // ctx[0x150]=0 or 1, ctx[0x1080]->[0x130][0x8]=1 (matchData dirty), then
+    // iterates 22-player loop emitting 0xA2CB726E packets via sub_1428F7B00.
+    // Early-exits if ctx[0x1AA8] != 0 (re-entry gate). ctx here is the OUTER
+    // state-root (qword_14D895190 dereffed), NOT matchData from FnGetMatchCtx.
+    extern void* FnAiTakeoverEnabler;  // sub_1427FD810
+
     // Address of qword_14D895190 (global state-root pointer). Resolved
     // from the first instruction of sub_142805590 (mov rax, cs:...).
     // Used to override mode at +0x1A0 during AFK takeover call so the

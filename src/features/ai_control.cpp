@@ -303,20 +303,62 @@ namespace
 
 bool ai_control::SendAiTakeover()
 {
-    // One-shot latch: the AI-takeover is a single captain-slot write plus one
-    // paired state-sync. Repeating the write retriggers the dispatcher to
-    // rebroadcast 0xA2CB726E with Buf[2]=0x00000001 ("human takeover" flag)
-    // for opponent players, which peer flags as DataMismatch on opp squad.
+    // One-shot latch: sub_1427FD810 has a re-entry gate at ctx[0x1AA8] — it
+    // refuses to run twice per match. We gate here too so the overlay tick
+    // stops pounding it every frame.
     if (g_aiTakeoverFired) return false;
 
-    // Kickoff gate — MatchTimer arms it at the prev<=0/cur>0 transition
-    // (no 3-second dwell anymore; cheat fires inside the +0..+2s window).
+    // Kickoff gate — MatchTimer arms it at the prev<=0/cur>0 transition.
     if (!g_kickoffArmed) return false;
 
-    uintptr_t ctx = GetMatchCtx();
-    if (!ctx || !IsInActiveGameplay(ctx)) return false;
+    // Resolve match_ctx — the OUTER state root (qword_14D895190 dereffed),
+    // not matchData. sub_1427FD810 takes match_ctx.
+    if (!offsets::StateRootPtrAddr || !offsets::FnAiTakeoverEnabler) {
+        log::debug("[AI] StateRootPtrAddr or FnAiTakeoverEnabler missing\r\n");
+        return false;
+    }
 
-    if (!ApplyMySideAiMarkers(ctx, "takeover-self")) {
+    uintptr_t match_ctx = 0;
+    uint8_t latchPrev   = 0xFF;
+    __try {
+        match_ctx = *reinterpret_cast<uintptr_t*>(offsets::StateRootPtrAddr);
+        if (match_ctx) latchPrev = *reinterpret_cast<uint8_t*>(match_ctx + 0x1AA8);
+    } __except (EXCEPTION_EXECUTE_HANDLER) { match_ctx = 0; }
+
+    if (!match_ctx) {
+        log::debug("[AI] match_ctx not live\r\n");
+        return false;
+    }
+    if (latchPrev != 0) {
+        // Re-entry gate already set — enabler would early-exit and do nothing.
+        // Treat as "already armed" so we stop pounding from the overlay tick.
+        g_aiTakeoverFired = true;
+        char buf[128];
+        fmt::snprintf(buf, sizeof(buf),
+            "[AI] takeover skipped — latch already set (prev=%02X)\r\n", latchPrev);
+        log::debug(buf);
+        return false;
+    }
+
+    // Call sub_1427FD810(match_ctx, mode=0, ack=0). Signature per IDA RE:
+    //   __int64 __fastcall sub_1427FD810(__int64 ctx, int mode, __int8 ack);
+    // mode=0 selects the AI-takeover path; ack=0 because we're initiating.
+    typedef int64_t(__fastcall* enabler_fn)(uintptr_t, int, uint8_t);
+    enabler_fn fn = reinterpret_cast<enabler_fn>(offsets::FnAiTakeoverEnabler);
+
+    int64_t rc = 0;
+    bool threw = false;
+    __try {
+        rc = fn(match_ctx, 0, 0);
+    } __except (EXCEPTION_EXECUTE_HANDLER) { threw = true; }
+
+    char buf[160];
+    fmt::snprintf(buf, sizeof(buf),
+        "[AI] takeover-self match_ctx=%p rc=%lld threw=%d (OptionA-direct sub_1427FD810)\r\n",
+        (void*)match_ctx, (long long)rc, threw ? 1 : 0);
+    log::debug(buf);
+
+    if (threw || rc == 0) {
         toast::Show(toast::Type::Error, "AI: takeover failed");
         return false;
     }

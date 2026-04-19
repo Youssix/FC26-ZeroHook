@@ -32,6 +32,7 @@ void*         offsets::FnAiSlotResolver   = nullptr;
 void*         offsets::FnAiStateSync      = nullptr;
 void*         offsets::FnAfkTakeover      = nullptr;  // sub_1427F7640
 void*         offsets::FnAiTakeoverDispatch = nullptr; // sub_142812730
+void*         offsets::FnAiTakeoverEnabler  = nullptr; // sub_1427FD810
 uintptr_t     offsets::StateRootPtrAddr   = 0;        // &qword_14D895190
 uintptr_t     offsets::EAIDVTable        = 0;
 void*         offsets::FnEAID            = nullptr;
@@ -321,6 +322,24 @@ bool offsets::Init()
     fmt::snprintf(buf, sizeof(buf),
         "[offsets] [12b] %s FnAiTakeoverDispatch: %p\r\n",
         FnAiTakeoverDispatch ? "OK" : "FAIL", FnAiTakeoverDispatch);
+    log::debug(buf);
+
+    // ── 12c. AI takeover enabler (sub_1427FD810) ───────────────────
+    //   Invoked by FnAiTakeoverDispatch on mode=0 path. Does the heavy
+    //   lifting: writes ctx[0x1AB0]=mode, ctx[0x1AA8]=1, ctx[0x1AB5]=0,
+    //   ctx[0x14C]=-1, ctx[0x150]=0/1, marks matchData dirty, then fires
+    //   the 22-player 0xA2CB726E emit loop via sub_1428F7B00.
+    //   Prologue: push rbp; push rbx; push rdi; push r13;
+    //             lea rbp,[rsp-158h]; sub rsp,258h;
+    //             mov rax,cs:__security_cookie; xor rax,rsp;
+    //             mov [rbp+130h],rax; cmp byte [rcx+1AA8h],0
+    //   The 0x1AA8 compare on entry is the anchor — no other function
+    //   in the binary checks this exact offset with this prologue shape.
+    FnAiTakeoverEnabler = game::pattern_scan(GameBase, GameSize,
+        "40 55 53 57 41 55 48 8D AC 24 A8 FE FF FF 48 81 EC 58 02 00 00 48 8B 05 ? ? ? ? 48 33 C4 48 89 85 ? ? ? ? 80 B9 A8 1A 00 00 00");
+    fmt::snprintf(buf, sizeof(buf),
+        "[offsets] [12c] %s FnAiTakeoverEnabler: %p\r\n",
+        FnAiTakeoverEnabler ? "OK" : "FAIL", FnAiTakeoverEnabler);
     log::debug(buf);
 
     // ── 13. State-root pointer global (qword_14D895190) ────────────
