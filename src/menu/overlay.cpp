@@ -1127,7 +1127,18 @@ void overlay::Frame(float screenW, float screenH)
                     "Log every inbound RouteGameMessage opcode (minus 4 framing opcodes) to zerohook.log. Toggle live — no restart. OFF by default.");
                 CustomMenu::g_menu.Toggle("Deep Hook AI Takeover",
                     (bool*)&ai_control::g_deepHookAiTakeover,
-                    "Intercept the game's AFK decision brain (sub_14282BB00) and force it to invoke FnAfkTakeover for every slot on OUR team. Piggybacks on the game's own validated takeover path — no forged packets. Toggle live.");
+                    "Hook-based approach: intercept AFK_DECISION_BRAIN calls, set matchCtx[0x2554]=1 for our slots, let the brain naturally take its fast path. Toggle live.");
+
+                // Edge-detected byte-patch toggle. Applies / removes the
+                // EPT patch on the state transition (not every frame).
+                static bool s_lastForceAfk = false;
+                CustomMenu::g_menu.Toggle("Force AFK Path (byte patch)",
+                    (bool*)&ai_control::g_forceAfkPath,
+                    "EPT byte-patches sub_14282BB00 at 0x14282BF0A (jz short -> nop nop) so whenever the brain reaches its fast-path block, FnAfkTakeover is always called. Zero hook overhead. Normal brain gates (CPU_VS_CPU / matchCtx+0x2557 / NOIDLE / NOIDLEREMOVE) still apply.");
+                if ((bool)ai_control::g_forceAfkPath != s_lastForceAfk) {
+                    s_lastForceAfk = (bool)ai_control::g_forceAfkPath;
+                    ai_control::ApplyForceAfkPath(s_lastForceAfk);
+                }
                 CustomMenu::g_menu.EndSection();
             }
         }

@@ -47,6 +47,20 @@ namespace ai_control
     // Runtime-toggled via Settings > Deep Hook AI Takeover.
     extern volatile bool g_deepHookAiTakeover;
 
+    // Byte-patch approach to forcing the AFK takeover path. EPT-patches
+    // sub_14282BB00 at RVA 0x282BF0A (the `jz short` that skips the
+    // fast-path FnAfkTakeover call) to two NOPs, so whenever the brain
+    // reaches the fast-path block, sub_1427F7640 always fires.
+    //
+    // Zero EPT exit overhead — the patched bytes just execute as-is.
+    // Invisible to read-view integrity checks via EPT-split.
+    //
+    // Prerequisite: normal brain gates still apply (CPU_VS_CPU,
+    // matchCtx[0x2557], NOIDLE, NOIDLEREMOVE). If any fail the brain
+    // returns before reaching our patched site and nothing fires.
+    extern volatile bool g_forceAfkPath;
+    void ApplyForceAfkPath(bool enable);
+
     // Reset capture flag (called on match start / kickoff frame).
     void ResetCapture();
 

@@ -31,6 +31,7 @@
 #include "sliders.h"
 #include "rage.h"
 #include "../spoof/spoof_call.hpp"
+#include "../game/game.h"
 #include "../log/log.h"
 #include "../log/fmt.h"
 #include "../menu/toast.h"
@@ -41,6 +42,71 @@ volatile bool     ai_control::g_playerIdCaptured   = false;
 volatile bool     ai_control::g_kickoffArmed       = false;
 volatile bool     ai_control::g_aiTakeoverFired    = false;
 volatile bool     ai_control::g_deepHookAiTakeover = false;
+volatile bool     ai_control::g_forceAfkPath       = false;
+
+namespace
+{
+    // sub_14282BB00 at IDA 0x14282BB00 → game-base RVA 0x282BB00.
+    // Inside the fast-path block:
+    //   14282bf07: test r15b, r15b           (r15b holds v11 = matchCtx[0x2554])
+    //   14282bf0a: jz   short loc_14282BF27   ← patch site (2 bytes: 74 1B)
+    //   14282bf0c..14282bf1a: load args for sub_1427F7640
+    //   14282bf1d: call sub_1427F7640        ← the takeover
+    // Patch those 2 bytes to 90 90 so the jz becomes a no-op and every
+    // time control reaches this block sub_1427F7640 is called with the
+    // brain's own derived (matchCtx, slot, v34, v36) args.
+    constexpr uintptr_t kForceAfkPathRva     = 0x282BF0AULL;
+    constexpr unsigned char kOrigJzBytes[2]  = { 0x74, 0x1B };
+    constexpr unsigned char kNopBytes[2]     = { 0x90, 0x90 };
+    bool g_forceAfkPathInstalled = false;
+}
+
+void ai_control::ApplyForceAfkPath(bool enable)
+{
+    if (!offsets::GameBase) return;
+    uintptr_t addr = reinterpret_cast<uintptr_t>(offsets::GameBase) + kForceAfkPathRva;
+
+    if (enable && !g_forceAfkPathInstalled)
+    {
+        if (game::ept_patch(addr, kNopBytes, 2))
+        {
+            g_forceAfkPathInstalled = true;
+            g_forceAfkPath          = true;
+            char b[128];
+            fmt::snprintf(b, sizeof(b),
+                "[ForceAfkPath] ON  — ept_patch %p: 74 1B -> 90 90\r\n",
+                (void*)addr);
+            log::debug(b);
+            toast::Show(toast::Type::Success, "Force AFK Path: ON");
+        }
+        else
+        {
+            log::debug("[ForceAfkPath] ept_patch(ON) FAILED\r\n");
+            toast::Show(toast::Type::Error, "Force AFK Path: patch failed");
+            g_forceAfkPath = false;
+        }
+    }
+    else if (!enable && g_forceAfkPathInstalled)
+    {
+        if (game::ept_patch(addr, kOrigJzBytes, 2))
+        {
+            g_forceAfkPathInstalled = false;
+            g_forceAfkPath          = false;
+            char b[128];
+            fmt::snprintf(b, sizeof(b),
+                "[ForceAfkPath] OFF — ept_patch %p: 90 90 -> 74 1B\r\n",
+                (void*)addr);
+            log::debug(b);
+            toast::Show(toast::Type::Info, "Force AFK Path: OFF");
+        }
+        else
+        {
+            log::debug("[ForceAfkPath] ept_patch(OFF) FAILED\r\n");
+            toast::Show(toast::Type::Error, "Force AFK Path: restore failed");
+            g_forceAfkPath = true;  // keep UI in sync with actual state
+        }
+    }
+}
 
 void ai_control::ResetCapture()
 {
