@@ -257,6 +257,13 @@ namespace
         0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu,
         0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu
     };
+
+    // Deep-hook state: track when we've primed matchCtx[0x2554]=1 so the
+    // NEXT brain entry restores it. Single-cell cache because the brain is
+    // called sequentially per-tick.
+    volatile bool               g_latch2554Primed    = false;
+    volatile unsigned long long g_primedMatchCtx     = 0;
+    volatile unsigned char      g_preservedLatch2554 = 0;
 }
 extern "C" unsigned long long TraceHook_AfkDecisionBrain(
     void* ctx, unsigned long long a1, unsigned int a2,
@@ -281,40 +288,47 @@ extern "C" unsigned long long TraceHook_AfkDecisionBrain(
 
     bool isOurSlot = (ourTeam == 0 || ourTeam == 1) && (slotTeam == ourTeam);
 
-    // ── Deep-hook AI takeover ─────────────────────────────────────────
-    // When the toggle is on and the brain is about to process one of our
-    // slots, call the game's own sub_1427F7640 (FnAfkTakeover) directly
-    // with the exact args this invocation would have received on its
-    // AFK-takeover branch, then skip the brain's normal processing.
+    // ── Deep-hook AI takeover (true state-modification path) ──────────
+    // The brain's fast path is:
+    //     v11 = matchCtx[0x2554];       // takeover-active latch
+    //     ...
+    //     if (!NOIDLEREMOVE) {
+    //         if (v11) { sub_1427F7640(a1, slot, v34, v36); return; }
+    //         ...
+    //     }
     //
-    // The brain's natural call site is:
-    //     if (v36) sub_1427F7640(a1, v6, v34, v36);
-    // where v34 is a derived team flag (we pass 0 — matches what the
-    // log shows on natural AFK triggers) and v36 is an "is-idle-event"
-    // flag we approximate as a5 (the eventType arg passed into the brain).
+    // Setting matchCtx[0x2554] = 1 on entry causes the brain to take the
+    // fast path with its OWN derived v34/v36 args and call FnAfkTakeover
+    // natively. We then reset latch2554 to 0 at the START of the NEXT
+    // brain call so the same matchCtx doesn't keep fast-pathing forever
+    // (which would takeover opponent slots too).
+    //
+    // The "reset on next entry" pattern is race-free because the brain is
+    // called sequentially per-tick (single-threaded per match-tick loop).
+    if (g_latch2554Primed && g_primedMatchCtx == a1)
+    {
+        __try {
+            *(unsigned char*)(a1 + 0x2554) = g_preservedLatch2554;
+        } __except (1) {}
+        g_latch2554Primed = false;
+    }
+
     if (ai_control::g_deepHookAiTakeover && isOurSlot)
     {
-        typedef void (__fastcall* AfkTakeoverFn)(
-            unsigned long long matchCtx, unsigned long long slot,
-            unsigned char teamFlag, unsigned char eventType);
-
-        constexpr uintptr_t kFnAfkTakeoverRva = 0x27F7640ULL;
-        uintptr_t fnAddr = (uintptr_t)offsets::GameBase + kFnAfkTakeoverRva;
-
         __try {
-            auto fn = reinterpret_cast<AfkTakeoverFn>(fnAddr);
-            fn(a1, (unsigned long long)a2, 0, (unsigned char)a5);
+            g_preservedLatch2554 = *(unsigned char*)(a1 + 0x2554);
+            *(unsigned char*)(a1 + 0x2554) = 1;   // prime the fast path
+            g_primedMatchCtx = a1;
+            g_latch2554Primed = true;
         } __except (1) {}
 
         char dh[256];
         fmt::snprintf(dh, sizeof(dh),
-            "(DEEP_HOOK fired matchCtx=%016llX slot=%u ourTeam=%u slotTeam=%u eventType=%u)",
-            a1, a2, ourTeam, slotTeam, a5);
+            "(DEEP_HOOK primed latch2554=0->1 matchCtx=%016llX slot=%u ourTeam=%u slotTeam=%u saved=%u)",
+            a1, a2, ourTeam, slotTeam, (unsigned)g_preservedLatch2554);
         emit_line("sub_14282BB00 AFK_DECISION_BRAIN", dh, ctx);
 
-        // Skip the brain's normal processing — takeover is handled.
-        ((ept::register_context_t*)ctx)->rax = 0;
-        return 1;
+        return 0;   // brain now runs with latch2554=1 → its own fast path
     }
 
     unsigned int sig = ((unsigned int)latch2554)
