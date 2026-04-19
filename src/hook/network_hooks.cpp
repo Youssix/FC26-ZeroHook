@@ -5,6 +5,7 @@
 #include "../features/sliders.h"
 #include "../features/ai_difficulty.h"
 #include "../features/ai_control.h"
+#include "../features/ai_trace.h"
 #include "../features/proclub.h"
 #include "../menu/toast.h"
 #include "../log/log.h"
@@ -79,21 +80,13 @@ namespace
         // the stub sees RAX != 0 and executes the original handler.
         unsigned long long orig_rax = ((ept::register_context_t*)ctx)->rax;
 
-        // ── TEMP DIAGNOSTIC: opcode census for AI-takeover design ────
-        // Logs incoming opcodes with wall-clock timestamp + RetAddr + structured
-        // fields for 0xA2CB726E + header-only for 0x4E9507C9 (semantics unknown)
-        // + full hex dump for others.
-        //
-        // Filters out the top-4 high-frequency per-tick network-framing opcodes
-        // (94% of raw traffic — pure framing, never event-relevant):
-        //   0x5D4D4E4C — ball/score state
-        //   0x38789943 — match timer sync
-        //   0x90F87271 — player physics sync (20k+ hits per 2-min match)
-        //   0x8CD19B0C — heartbeat
-        //
-        // NOTE: 0xAFEF31A7 and 0xB95B9311 are also high-frequency but fire
-        // during active gameplay (gameplay sync), not as pure framing noise —
-        // keep them in the log in case they carry actionable event signals.
+        // ── Opcode census — runtime-gated by Settings > Trace Opcodes ─
+        // Toggled live from the menu (ai_trace::g_traceOpcodes). When false,
+        // zero log I/O — the entire block is skipped without recompiling.
+        // Filters out the 4 per-tick framing opcodes (~94% of traffic):
+        //   0x5D4D4E4C  ball/score  0x38789943  timer sync
+        //   0x90F87271  physics     0x8CD19B0C  heartbeat
+        if (ai_trace::g_traceOpcodes)
         {
             unsigned int op_noise = *a2;
             bool is_noise =
@@ -115,15 +108,13 @@ namespace
             unsigned int op2_log = *a2;
             unsigned int op3_log = *a3;
 
-            char lb[2048];  // Bigger for hex dump
+            char lb[2048];
             int pos = 0;
 
-            // Header: timestamp + opcode identification
             pos += fmt::snprintf(lb + pos, sizeof(lb) - pos,
                 "[%02d:%02d:%02d.%03d] ",
                 st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
 
-            // Special-case 0xA2CB726E — structured fields (FC26-Internal log style)
             if (op2_log == 0xA2CB726E || op3_log == 0xA2CB726E) {
                 auto bd = reinterpret_cast<unsigned int*>(a4);
                 unsigned int team   = (bd && a5 >= 4)  ? bd[0] : 0;
@@ -133,15 +124,11 @@ namespace
                     "[Opcode 0xA2CB726E] Team=0x%08X Player=%u Slot=0x%02X Buf[2]=0x%08X Param7=%d RetAddr=%016llX\r\n",
                     team, player, (unsigned char)a6, b2, a7, retAddr);
             }
-            // Special-case 0x4E9507C9 — structured header only. Purpose unknown;
-            // we observed it co-emits with 0xA2CB726E cascades but have NOT
-            // reverse-engineered its payload format or semantics.
             else if (op2_log == 0x4E9507C9 || op3_log == 0x4E9507C9) {
                 pos += fmt::snprintf(lb + pos, sizeof(lb) - pos,
                     "[Opcode 0x4E9507C9] sz=%d Slot=0x%02X Param7=%d RetAddr=%016llX\r\n",
                     a5, (unsigned char)a6, a7, retAddr);
             }
-            // Everything else: header + full hex dump (up to 128 bytes)
             else {
                 pos += fmt::snprintf(lb + pos, sizeof(lb) - pos,
                     "[Opcode 0x%08X] a3=0x%08X sz=%d Slot=0x%02X Param7=%d RetAddr=%016llX",

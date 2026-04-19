@@ -6,6 +6,7 @@
 #include "hook/network_hooks.h"
 #include "offsets/offsets.h"
 #include "bridge/bridge.h"
+#include "features/ai_trace.h"
 
 #pragma comment(lib, "kernel32.lib")
 
@@ -38,6 +39,8 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
         hook::install_eaid_hook();            breadcrumb::set("boot:eaid_hooked");
         hook::install_mismatch_gate_hook();   breadcrumb::set("boot:mismatch_hooked");
         hook::install_checksum_check_hook();  breadcrumb::set("boot:checksum_hooked");
+
+        ai_trace::install_all();              breadcrumb::set("boot:ai_trace_hooked");
 
         bridge::init("FC26");
         breadcrumb::set("boot:complete");

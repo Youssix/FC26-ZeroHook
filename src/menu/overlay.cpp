@@ -16,6 +16,7 @@
 #include "../features/ai_difficulty.h"
 #include "../features/proclub.h"
 #include "../features/ai_control.h"
+#include "../features/ai_trace.h"
 #include "../log/fmt.h"
 #include "../log/log.h"
 #include "../renderer/renderer.h"
@@ -1116,6 +1117,14 @@ void overlay::Frame(float screenW, float screenH)
                 CustomMenu::g_menu.SliderFloat("Opacity", &menu::menuOpacity, 0.1f, 1.0f);
                 CustomMenu::g_menu.SetOpacity(menu::menuOpacity);
                 CustomMenu::g_menu.Toggle("Show Notifications", &toast::g_enabled);
+                CustomMenu::g_menu.EndSection();
+            }
+
+            if (CustomMenu::g_menu.BeginSection("Debug Logging"))
+            {
+                CustomMenu::g_menu.Toggle("Trace Opcodes",
+                    (bool*)&ai_trace::g_traceOpcodes,
+                    "Log every inbound RouteGameMessage opcode (minus 4 framing opcodes) to zerohook.log. Toggle live — no restart. OFF by default.");
                 CustomMenu::g_menu.EndSection();
             }
         }
