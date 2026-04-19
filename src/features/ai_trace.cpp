@@ -88,12 +88,15 @@ namespace
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_takeoverActivate    = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_takeoverResume      = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_takeoverSlot        = {};
-    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_takeoverSlotWrap    = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_pauseWrap           = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_resumeWrap          = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_featureFlagGet      = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_stateSync           = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_createPlayerSwitch  = {};
+    // Note: no TAKEOVER_SLOT_WRAP hook — sub_148ACCB00 is a 10-byte thunk to
+    // sub_142814760 (which we already hook). Its prologue is too generic
+    // (40 53 48 83 EC 20 ... 5B E9) and pattern-matched the wrong function
+    // firing ~30Hz. Dropped to eliminate 82% of previous trace-log noise.
 }
 
 // ── Detours (all return 0 = pass through; none mutate state) ─────────
@@ -130,15 +133,6 @@ extern "C" unsigned long long TraceHook_TakeoverSlot(
     return 0;
 }
 
-extern "C" unsigned long long TraceHook_TakeoverSlotWrap(
-    void* ctx, unsigned long long a1, int a2)
-{
-    char extra[96];
-    fmt::snprintf(extra, sizeof(extra), "(slot=%d a1=%016llX)", a2, a1);
-    emit_line("sub_148ACCB00 TAKEOVER_SLOT_WRAP", extra, ctx);
-    return 0;
-}
-
 extern "C" unsigned long long TraceHook_PauseWrap(
     void* ctx, unsigned long long a1, unsigned long long a2)
 {
@@ -160,36 +154,56 @@ extern "C" unsigned long long TraceHook_ResumeWrap(
 }
 
 // Feature-flag reader fires per-lookup (many per frame on flag-heavy paths).
-// Rate-limit: only log the first 2000 unique (name, default) pairs, then
-// stop. Enough to capture which flags the match consults at least once.
+// Dedupe by name: each unique flag name is logged exactly once per session.
+// In a previous run only 7 unique names appeared across 2000+ calls, so a
+// fixed-size seen-list is plenty. Races are tolerated (may produce an
+// occasional duplicate), never corruption.
 namespace
 {
-    volatile long g_ffgLogged  = 0;
-    constexpr long kFfgMaxLog  = 2000;
+    constexpr int kFfgNameCap = 256;
+    constexpr int kFfgNameLen = 96;
+    volatile long g_ffgSeenCount = 0;
+    char          g_ffgSeenNames[kFfgNameCap][kFfgNameLen] = {};
+
+    inline bool str_eq(const char* a, const char* b)
+    {
+        while (*a && *b && *a == *b) { ++a; ++b; }
+        return *a == 0 && *b == 0;
+    }
 }
 extern "C" unsigned long long TraceHook_FeatureFlagGet(
     void* ctx, unsigned long long a1, const char* a2, unsigned int a3)
 {
-    long n = _InterlockedIncrement(&g_ffgLogged);
-    if (n > kFfgMaxLog) return 0;
+    if (!a2) return 0;
 
-    const char* safe = "(unreadable)";
-    char nameBuf[96];
+    // 1. Scan already-seen names. If found, suppress.
+    long seen = g_ffgSeenCount;
+    if (seen > kFfgNameCap) seen = kFfgNameCap;
     __try {
-        if (a2) {
-            int i = 0;
-            while (i < 95 && ((const unsigned char*)a2)[i] >= 0x20
-                   && ((const unsigned char*)a2)[i] < 0x7F) {
-                nameBuf[i] = a2[i]; ++i;
-            }
-            nameBuf[i] = 0;
-            if (i > 0) safe = nameBuf;
+        for (long i = 0; i < seen; ++i)
+            if (str_eq(g_ffgSeenNames[i], a2)) return 0;
+    } __except (1) { return 0; }
+
+    // 2. Claim a slot atomically. Bail if the table is full.
+    long idx = _InterlockedIncrement(&g_ffgSeenCount) - 1;
+    if (idx >= kFfgNameCap) return 0;
+
+    // 3. Copy the name (printable ASCII only, zero-terminated).
+    __try {
+        int k = 0;
+        while (k < kFfgNameLen - 1
+               && ((const unsigned char*)a2)[k] >= 0x20
+               && ((const unsigned char*)a2)[k] < 0x7F) {
+            g_ffgSeenNames[idx][k] = a2[k];
+            ++k;
         }
-    } __except (1) {}
+        g_ffgSeenNames[idx][k] = 0;
+    } __except (1) { return 0; }
 
     char extra[192];
     fmt::snprintf(extra, sizeof(extra),
-        "(table=%016llX name=\"%s\" default=%u)", a1, safe, a3);
+        "(FIRST SEEN; table=%016llX name=\"%s\" default=%u)",
+        a1, g_ffgSeenNames[idx], a3);
     emit_line("sub_146549750 FEATURE_FLAG_GET", extra, ctx);
     return 0;
 }
@@ -284,12 +298,6 @@ void ai_trace::install_all()
             "48 89 5C 24 10 48 89 74 24 18 48 89 7C 24 20 55 41 56 41 57 48 8D AC 24 C0 DC FF FF B8 40 24 00 00",
             (void*)&TraceHook_TakeoverResume,
             &g_params_takeoverResume, nullptr
-        },
-        {
-            "sub_148ACCB00 TAKEOVER_SLOT_WRAP",
-            "40 53 48 83 EC 20 8B DA E8 ? ? ? ? 8B D3 48 8B C8 48 83 C4 20 5B E9",
-            (void*)&TraceHook_TakeoverSlotWrap,
-            &g_params_takeoverSlotWrap, nullptr
         },
         {
             "sub_148A9FEB0 PAUSE_WRAP",
