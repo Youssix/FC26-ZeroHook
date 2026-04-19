@@ -303,63 +303,55 @@ namespace
 
 bool ai_control::SendAiTakeover()
 {
-    // One-shot latch: sub_1427FD810 has a re-entry gate at ctx[0x1AA8] — it
-    // refuses to run twice per match. We gate here too so the overlay tick
-    // stops pounding it every frame.
-    if (g_aiTakeoverFired) return false;
+    // Restoration of the old working path:
+    //   opcode = 0xA2CB726E (controller assignment)
+    //   buf    = { 0xFFFFFFFF, ourPlayerId, 0 }     // 3 x u32, size = 12
+    //   a6     = playerside (0 or 1)                // our team side
+    //   a7     = 0
+    // Single packet. No 22-slot sweep. No sub_1427FD810 call. No matchData
+    // field writes. Just one emit via the game's own dispatcher vtable[9],
+    // spoof-called so the call site looks legit.
+    //
+    // Known limitation: this desyncs after the first goal because the game
+    // re-emits its own controller-assignment broadcast on kickoff reset,
+    // overwriting our AI marker. Re-arming on kickoff-transitions is TODO —
+    // get the basic takeover working again first, then layer the fix.
 
-    // Kickoff gate — MatchTimer arms it at the prev<=0/cur>0 transition.
-    if (!g_kickoffArmed) return false;
-
-    // Resolve match_ctx — the OUTER state root (qword_14D895190 dereffed),
-    // not matchData. sub_1427FD810 takes match_ctx.
-    if (!offsets::StateRootPtrAddr || !offsets::FnAiTakeoverEnabler) {
-        log::debug("[AI] StateRootPtrAddr or FnAiTakeoverEnabler missing\r\n");
+    if (g_aiTakeoverFired) return false;     // one-shot per match
+    if (!g_kickoffArmed)   return false;     // arm after match-timer kickoff tx
+    if (!g_playerIdCaptured) {
+        // No captured ID yet — the game hasn't broadcast the initial
+        // controller-assignment packet for our side. Nothing to target.
         return false;
     }
 
-    uintptr_t match_ctx = 0;
-    uint8_t latchPrev   = 0xFF;
-    __try {
-        match_ctx = *reinterpret_cast<uintptr_t*>(offsets::StateRootPtrAddr);
-        if (match_ctx) latchPrev = *reinterpret_cast<uint8_t*>(match_ctx + 0x1AA8);
-    } __except (EXCEPTION_EXECUTE_HANDLER) { match_ctx = 0; }
-
-    if (!match_ctx) {
-        log::debug("[AI] match_ctx not live\r\n");
-        return false;
-    }
-    if (latchPrev != 0) {
-        // Re-entry gate already set — enabler would early-exit and do nothing.
-        // Treat as "already armed" so we stop pounding from the overlay tick.
-        g_aiTakeoverFired = true;
-        char buf[128];
-        fmt::snprintf(buf, sizeof(buf),
-            "[AI] takeover skipped — latch already set (prev=%02X)\r\n", latchPrev);
-        log::debug(buf);
+    uintptr_t rcx = 0; rage::dispatch_fn_t fn = nullptr;
+    if (!rage::get_dispatch(rcx, fn)) {
+        log::debug("[AI] dispatcher unresolved\r\n");
         return false;
     }
 
-    // Call sub_1427FD810(match_ctx, mode=0, ack=0). Signature per IDA RE:
-    //   __int64 __fastcall sub_1427FD810(__int64 ctx, int mode, __int8 ack);
-    // mode=0 selects the AI-takeover path; ack=0 because we're initiating.
-    typedef int64_t(__fastcall* enabler_fn)(uintptr_t, int, uint8_t);
-    enabler_fn fn = reinterpret_cast<enabler_fn>(offsets::FnAiTakeoverEnabler);
+    uint64_t opcode = 0xA2CB726E;
+    uint32_t buffer[3] = { 0xFFFFFFFFu, g_ourPlayerId, 0x00000000u };
 
-    int64_t rc = 0;
     bool threw = false;
+    hook::g_allow_attack_send = true;
     __try {
-        rc = fn(match_ctx, 0, 0);
+        spoof_call(fn, (uint64_t)rcx,
+                   (uint64_t*)&opcode, (uint64_t*)&opcode,
+                   (void*)buffer, (int)12,
+                   (char)sliders::playerside, (unsigned char)0);
     } __except (EXCEPTION_EXECUTE_HANDLER) { threw = true; }
+    hook::g_allow_attack_send = false;
 
     char buf[160];
     fmt::snprintf(buf, sizeof(buf),
-        "[AI] takeover-self match_ctx=%p rc=%lld threw=%d (OptionA-direct sub_1427FD810)\r\n",
-        (void*)match_ctx, (long long)rc, threw ? 1 : 0);
+        "[AI] takeover-self emit playerId=%u playerside=%d threw=%d\r\n",
+        g_ourPlayerId, sliders::playerside, threw ? 1 : 0);
     log::debug(buf);
 
-    if (threw || rc == 0) {
-        toast::Show(toast::Type::Error, "AI: takeover failed");
+    if (threw) {
+        toast::Show(toast::Type::Error, "AI: takeover threw");
         return false;
     }
     g_aiTakeoverFired = true;
