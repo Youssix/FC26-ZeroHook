@@ -95,6 +95,7 @@ namespace
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_createPlayerSwitch  = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_lxSetIsIdle         = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_lxSetIsActive       = {};
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_onlineCpuStateMachine = {};
 }
 
 // ── Detours (all return 0 = pass through; none mutate state) ─────────
@@ -256,6 +257,28 @@ extern "C" unsigned long long TraceHook_CreatePlayerSwitch(
     return 0;
 }
 
+// sub_1489A9CE0 — the online/CPU takeover STATE MACHINE. This is the
+// function that queries "ONLINE_CPU_CONTROL" via sub_146549750 and, when
+// the flag is disabled, calls sub_1427FA200 / sub_1427FCBD0 directly. It
+// switches on a1[+0x44] (phase 0..6) — logging the phase per entry lets
+// us reconstruct the exact transition sequence around takeover.
+extern "C" unsigned long long TraceHook_OnlineCpuStateMachine(
+    void* ctx, unsigned long long a1)
+{
+    unsigned int phase  = 0xFFFFFFFF;
+    unsigned int subArg = 0xFFFFFFFF;
+    __try {
+        phase  = *(unsigned int*)(a1 + 0x44);
+        subArg = *(unsigned int*)(a1 + 0x40);
+    } __except (1) {}
+
+    char extra[192];
+    fmt::snprintf(extra, sizeof(extra),
+        "(ctx=%016llX phase=%u subArg=%u)", a1, phase, subArg);
+    emit_line("sub_1489A9CE0 ONLINE_CPU_STATE_MACHINE", extra, ctx);
+    return 0;
+}
+
 // ── install_all ──────────────────────────────────────────────────────
 //
 // Every target has a known RVA from the IDA dump (imagebase 0x140000000),
@@ -344,6 +367,8 @@ void ai_trace::install_all()
           (void*)&TraceHook_LxSetIsIdle,         &g_params_lxSetIsIdle         },
         { "sub_146F04EA0 LX_SET_PLAYER_ACTIVE_USER", 0x146F04EA0ULL,
           (void*)&TraceHook_LxSetIsActive,       &g_params_lxSetIsActive       },
+        { "sub_1489A9CE0 ONLINE_CPU_STATE_MACHINE", 0x1489A9CE0ULL,
+          (void*)&TraceHook_OnlineCpuStateMachine, &g_params_onlineCpuStateMachine },
     };
 
     for (const auto& t : targets) install_one(t);
