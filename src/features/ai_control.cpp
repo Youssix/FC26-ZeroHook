@@ -303,25 +303,42 @@ namespace
 
 bool ai_control::SendAiTakeover()
 {
-    // Restoration of the old working path:
-    //   opcode = 0xA2CB726E (controller assignment)
-    //   buf    = { 0xFFFFFFFF, ourPlayerId, 0 }     // 3 x u32, size = 12
-    //   a6     = playerside (0 or 1)                // our team side
-    //   a7     = 0
-    // Single packet. No 22-slot sweep. No sub_1427FD810 call. No matchData
-    // field writes. Just one emit via the game's own dispatcher vtable[9],
-    // spoof-called so the call site looks legit.
+    // 21-packet burst (verified cheat signature across 4 AI-vs-opp logs):
     //
-    // Known limitation: this desyncs after the first goal because the game
-    // re-emits its own controller-assignment broadcast on kickoff reset,
-    // overwriting our AI marker. Re-arming on kickoff-transitions is TODO —
-    // get the basic takeover working again first, then layer the fix.
+    //   Packet  1: opcode=0xA2CB726E, buf={0x00000000, 1-ourPid, 0}, size=12  ← target opp captain
+    //   Packet  2: opcode=0xA2CB726E, buf={0xFFFFFFFF,       2, 0}, size=12  ← broadcast
+    //   Packet  3: opcode=0xA2CB726E, buf={0xFFFFFFFF,       3, 0}, size=12
+    //     ...
+    //   Packet 21: opcode=0xA2CB726E, buf={0xFFFFFFFF,      21, 0}, size=12
+    //
+    // Rule (from cheater's perspective):
+    //   skipped      = ourPlayerId  (our own captain slot — 0 or 1 in 1v1)
+    //   first_target = 1 - ourPlayerId  (opponent's captain slot)
+    //   packets 2..21 = broadcast Team=0xFFFFFFFF for Player=2..21
+    //
+    // Burst timing: tight C++ loop (80-95% of inter-packet deltas = 0ms).
+    // a6 = playerside, a7 = 0 — same as the pre-v2 single-packet path.
+    //
+    // Why 21 (not 22): 22 player slots total, we skip our own.
+    // Why first packet has Team=0x0 specifically: the first packet "claims"
+    // the opponent's captain for AI; the rest are bookkeeping broadcast.
+    //
+    // Game naturally emits a 0x4E9507C9 state-sync (sz=656) post-burst —
+    // we do NOT need to emit it ourselves. Precursor packets (0x8B6ADB85 /
+    // 0xE20BA475) are natural traffic, not cheat-emitted.
 
     if (g_aiTakeoverFired) return false;     // one-shot per match
-    if (!g_kickoffArmed)   return false;     // arm after match-timer kickoff tx
-    if (!g_playerIdCaptured) {
-        // No captured ID yet — the game hasn't broadcast the initial
-        // controller-assignment packet for our side. Nothing to target.
+    if (!g_kickoffArmed)   return false;
+    if (!g_playerIdCaptured) return false;
+
+    uint32_t my_pid = g_ourPlayerId;
+    if (my_pid != 0 && my_pid != 1) {
+        // In 1v1, ourPlayerId should be 0 or 1 (the captain slots). If it's
+        // anything else, the capture is unreliable — refuse to emit.
+        char lb[128];
+        fmt::snprintf(lb, sizeof(lb),
+            "[AI] ourPlayerId=%u out of {0,1} — refusing to burst\r\n", my_pid);
+        log::debug(lb);
         return false;
     }
 
@@ -332,30 +349,50 @@ bool ai_control::SendAiTakeover()
     }
 
     uint64_t opcode = 0xA2CB726E;
-    uint32_t buffer[3] = { 0xFFFFFFFFu, g_ourPlayerId, 0x00000000u };
+    uint32_t first_pid = 1 - my_pid;
+    int sent = 0;
+    int threw = 0;
 
-    bool threw = false;
     hook::g_allow_attack_send = true;
-    __try {
-        spoof_call(fn, (uint64_t)rcx,
-                   (uint64_t*)&opcode, (uint64_t*)&opcode,
-                   (void*)buffer, (int)12,
-                   (char)sliders::playerside, (unsigned char)0);
-    } __except (EXCEPTION_EXECUTE_HANDLER) { threw = true; }
+
+    // Packet 1: Team=0x0, Player=first_pid (opp captain), Buf=0
+    {
+        uint32_t buffer[3] = { 0x00000000u, first_pid, 0x00000000u };
+        __try {
+            spoof_call(fn, (uint64_t)rcx,
+                       (uint64_t*)&opcode, (uint64_t*)&opcode,
+                       (void*)buffer, (int)12,
+                       (char)sliders::playerside, (unsigned char)0);
+            ++sent;
+        } __except (EXCEPTION_EXECUTE_HANDLER) { ++threw; }
+    }
+
+    // Packets 2-21: broadcast Team=0xFFFFFFFF for Player=2..21
+    for (uint32_t i = 2; i < 22; ++i) {
+        uint32_t buffer[3] = { 0xFFFFFFFFu, i, 0x00000000u };
+        __try {
+            spoof_call(fn, (uint64_t)rcx,
+                       (uint64_t*)&opcode, (uint64_t*)&opcode,
+                       (void*)buffer, (int)12,
+                       (char)sliders::playerside, (unsigned char)0);
+            ++sent;
+        } __except (EXCEPTION_EXECUTE_HANDLER) { ++threw; }
+    }
+
     hook::g_allow_attack_send = false;
 
-    char buf[160];
-    fmt::snprintf(buf, sizeof(buf),
-        "[AI] takeover-self emit playerId=%u playerside=%d threw=%d\r\n",
-        g_ourPlayerId, sliders::playerside, threw ? 1 : 0);
-    log::debug(buf);
+    char lb[192];
+    fmt::snprintf(lb, sizeof(lb),
+        "[AI] takeover-self burst ourPid=%u first=%u skipped=%u sent=%d threw=%d\r\n",
+        my_pid, first_pid, my_pid, sent, threw);
+    log::debug(lb);
 
-    if (threw) {
-        toast::Show(toast::Type::Error, "AI: takeover threw");
+    if (threw > 0 && sent == 0) {
+        toast::Show(toast::Type::Error, "AI: takeover burst failed");
         return false;
     }
     g_aiTakeoverFired = true;
-    toast::Show(toast::Type::Success, "AI takeover armed");
+    toast::Show(toast::Type::Success, "AI takeover armed (21-burst)");
     return true;
 }
 
