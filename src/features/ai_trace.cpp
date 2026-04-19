@@ -2,7 +2,6 @@
 
 #include <Windows.h>
 #include "../offsets/offsets.h"
-#include "../game/game.h"
 #include "../hook/ept_hook.h"
 #include "../log/log.h"
 #include "../log/fmt.h"
@@ -88,15 +87,14 @@ namespace
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_takeoverActivate    = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_takeoverResume      = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_takeoverSlot        = {};
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_takeoverSlotWrap    = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_pauseWrap           = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_resumeWrap          = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_featureFlagGet      = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_stateSync           = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_params_createPlayerSwitch  = {};
-    // Note: no TAKEOVER_SLOT_WRAP hook — sub_148ACCB00 is a 10-byte thunk to
-    // sub_142814760 (which we already hook). Its prologue is too generic
-    // (40 53 48 83 EC 20 ... 5B E9) and pattern-matched the wrong function
-    // firing ~30Hz. Dropped to eliminate 82% of previous trace-log noise.
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_lxSetIsIdle         = {};
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_params_lxSetIsActive       = {};
 }
 
 // ── Detours (all return 0 = pass through; none mutate state) ─────────
@@ -130,6 +128,35 @@ extern "C" unsigned long long TraceHook_TakeoverSlot(
     fmt::snprintf(extra, sizeof(extra),
         "(matchCtx=%016llX, slot=%d)", a1, a2);
     emit_line("sub_142814760 TAKEOVER_SLOT", extra, ctx);
+    return 0;
+}
+
+extern "C" unsigned long long TraceHook_TakeoverSlotWrap(
+    void* ctx, unsigned long long a1, int a2)
+{
+    char extra[96];
+    fmt::snprintf(extra, sizeof(extra), "(a1=%016llX slot=%d)", a1, a2);
+    emit_line("sub_148ACCB00 TAKEOVER_SLOT_WRAP", extra, ctx);
+    return 0;
+}
+
+extern "C" unsigned long long TraceHook_LxSetIsIdle(
+    void* ctx, unsigned long long a1, unsigned long long a2)
+{
+    char extra[96];
+    fmt::snprintf(extra, sizeof(extra),
+        "(a1=%016llX scriptState=%016llX)", a1, a2);
+    emit_line("sub_146F01F40 LX_SET_IS_IDLE_PLAYER", extra, ctx);
+    return 0;
+}
+
+extern "C" unsigned long long TraceHook_LxSetIsActive(
+    void* ctx, unsigned long long a1, unsigned long long a2)
+{
+    char extra[96];
+    fmt::snprintf(extra, sizeof(extra),
+        "(a1=%016llX scriptState=%016llX)", a1, a2);
+    emit_line("sub_146F04EA0 LX_SET_PLAYER_ACTIVE_USER", extra, ctx);
     return 0;
 }
 
@@ -230,39 +257,52 @@ extern "C" unsigned long long TraceHook_CreatePlayerSwitch(
 }
 
 // ── install_all ──────────────────────────────────────────────────────
+//
+// Every target has a known RVA from the IDA dump (imagebase 0x140000000),
+// so we don't pattern-scan — we compute `GameBase + rva` directly. Immune
+// to false-positive matches (previous pattern-scan landed TAKEOVER_SLOT_WRAP
+// on the wrong function and spammed 9k log lines/session), and lets us hook
+// short/template-shaped functions that have no unique prologue.
+//
+// If the game binary updates and RVAs shift, re-dump and update this table.
 namespace
 {
+    // IDA imagebase for FC26 07_04_2026.exe dump.
+    constexpr uintptr_t kIdaImageBase = 0x140000000ULL;
+
     struct trace_target_t
     {
         const char* name;
-        const char* pattern;
+        uintptr_t   ida_addr;  // absolute address from IDA (includes imagebase)
         void*       detour;
         ept::ept_hook_install_params_t* params;
-        void**      resolved; // optional: if non-null, store resolved addr here
     };
 
     void install_one(const trace_target_t& t)
     {
         char buf[192];
-        void* match = game::pattern_scan(
-            offsets::GameBase, offsets::GameSize, t.pattern);
-        if (!match)
+
+        uintptr_t rva    = t.ida_addr - kIdaImageBase;
+        uintptr_t target = (uintptr_t)offsets::GameBase + rva;
+
+        if (rva >= (uintptr_t)offsets::GameSize)
         {
             fmt::snprintf(buf, sizeof(buf),
-                "[AI_TRACE] SKIP %s: pattern not resolved\r\n", t.name);
+                "[AI_TRACE] SKIP %s: rva=%llx out of module (size=%lx)\r\n",
+                t.name, (unsigned long long)rva,
+                (unsigned long)offsets::GameSize);
             ai_trace::log_line(buf);
             log::debug(buf);
             return;
         }
 
         fmt::snprintf(buf, sizeof(buf),
-            "[AI_TRACE] resolved %s -> %p\r\n", t.name, match);
+            "[AI_TRACE] installing %s @ %p (rva=%llx)\r\n",
+            t.name, (void*)target, (unsigned long long)rva);
         ai_trace::log_line(buf);
         log::debug(buf);
 
-        if (t.resolved) *t.resolved = match;
-
-        ept::install_hook(*t.params, (unsigned char*)match, t.detour, t.name);
+        ept::install_hook(*t.params, (unsigned char*)target, t.detour, t.name);
     }
 }
 
@@ -274,85 +314,39 @@ void ai_trace::install_all()
     // Header — marks start of a new trace session.
     SYSTEMTIME st;
     GetLocalTime(&st);
-    char hdr[160];
+    char hdr[192];
     fmt::snprintf(hdr, sizeof(hdr),
-        "\r\n==== AI_TRACE session start %04d-%02d-%02d %02d:%02d:%02d ====\r\n",
-        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+        "\r\n==== AI_TRACE session start %04d-%02d-%02d %02d:%02d:%02d (GameBase=%p) ====\r\n",
+        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond,
+        offsets::GameBase);
     log_line(hdr);
 
-    // Note: sub_146F01F40 / sub_146F04EA0 (lxSetPlayerIsIdlePlayer and
-    // its sibling) share an identical prologue with ~15 other Lua binding
-    // wrappers, so pattern-scan can't uniquely locate them without deeper
-    // body signatures. Skipped here; they're Lua-driven and unlikely to
-    // fire in online gameplay anyway.
-
-    trace_target_t targets[] = {
-        {
-            "sub_1427FA200 TAKEOVER_ACTIVATE",
-            "48 89 5C 24 10 48 89 6C 24 18 48 89 74 24 20 57 41 54 41 55 41 56 41 57 B8 40 24 00 00 E8",
-            (void*)&TraceHook_TakeoverActivate,
-            &g_params_takeoverActivate, nullptr
-        },
-        {
-            "sub_1427FCBD0 TAKEOVER_RESUME",
-            "48 89 5C 24 10 48 89 74 24 18 48 89 7C 24 20 55 41 56 41 57 48 8D AC 24 C0 DC FF FF B8 40 24 00 00",
-            (void*)&TraceHook_TakeoverResume,
-            &g_params_takeoverResume, nullptr
-        },
-        {
-            "sub_148A9FEB0 PAUSE_WRAP",
-            "40 57 48 83 EC 20 80 39 00 48 8B F9 0F 84 ? ? ? ? 83 79 08 00 0F 84 ? ? ? ? 80 79 01 00",
-            (void*)&TraceHook_PauseWrap,
-            &g_params_pauseWrap, nullptr
-        },
-        {
-            "sub_148A9FFA0 RESUME_WRAP",
-            "48 83 EC 28 80 79 0C 00 0F 84 ? ? ? ? 48 89 5C 24 30 48 89 7C 24 20 C6 41 0C 00 E8",
-            (void*)&TraceHook_ResumeWrap,
-            &g_params_resumeWrap, nullptr
-        },
-        {
-            "sub_146549750 FEATURE_FLAG_GET",
-            "48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 56 48 83 EC 20 45 8B F0 48 8B F2 48 8B E9",
-            (void*)&TraceHook_FeatureFlagGet,
-            &g_params_featureFlagGet, nullptr
-        },
-        {
-            "sub_146E98A00 CREATE_PLAYER_SWITCH",
-            "48 89 5C 24 08 48 89 74 24 18 48 89 7C 24 20 55 41 54 41 55 41 56 41 57 48 8D AC 24 30 F9 FF FF",
-            (void*)&TraceHook_CreatePlayerSwitch,
-            &g_params_createPlayerSwitch, nullptr
-        },
+    const trace_target_t targets[] = {
+        { "sub_1427FA200 TAKEOVER_ACTIVATE",    0x1427FA200ULL,
+          (void*)&TraceHook_TakeoverActivate,    &g_params_takeoverActivate    },
+        { "sub_1427FCBD0 TAKEOVER_RESUME",      0x1427FCBD0ULL,
+          (void*)&TraceHook_TakeoverResume,      &g_params_takeoverResume      },
+        { "sub_142814760 TAKEOVER_SLOT",        0x142814760ULL,
+          (void*)&TraceHook_TakeoverSlot,        &g_params_takeoverSlot        },
+        { "sub_148ACCB00 TAKEOVER_SLOT_WRAP",   0x148ACCB00ULL,
+          (void*)&TraceHook_TakeoverSlotWrap,    &g_params_takeoverSlotWrap    },
+        { "sub_148A9FEB0 PAUSE_WRAP",           0x148A9FEB0ULL,
+          (void*)&TraceHook_PauseWrap,           &g_params_pauseWrap           },
+        { "sub_148A9FFA0 RESUME_WRAP",          0x148A9FFA0ULL,
+          (void*)&TraceHook_ResumeWrap,          &g_params_resumeWrap          },
+        { "sub_146549750 FEATURE_FLAG_GET",     0x146549750ULL,
+          (void*)&TraceHook_FeatureFlagGet,      &g_params_featureFlagGet      },
+        { "sub_14282B1D0 STATE_SYNC",           0x14282B1D0ULL,
+          (void*)&TraceHook_StateSync,           &g_params_stateSync           },
+        { "sub_146E98A00 CREATE_PLAYER_SWITCH", 0x146E98A00ULL,
+          (void*)&TraceHook_CreatePlayerSwitch,  &g_params_createPlayerSwitch  },
+        { "sub_146F01F40 LX_SET_IS_IDLE_PLAYER", 0x146F01F40ULL,
+          (void*)&TraceHook_LxSetIsIdle,         &g_params_lxSetIsIdle         },
+        { "sub_146F04EA0 LX_SET_PLAYER_ACTIVE_USER", 0x146F04EA0ULL,
+          (void*)&TraceHook_LxSetIsActive,       &g_params_lxSetIsActive       },
     };
 
     for (const auto& t : targets) install_one(t);
-
-    // sub_142814760 (FnTakeOverSlot) and sub_14282B1D0 (FnAiStateSync)
-    // are already resolved by offsets::Init(). Hook them directly.
-    if (offsets::FnTakeOverSlot)
-    {
-        ept::install_hook(g_params_takeoverSlot,
-            (unsigned char*)offsets::FnTakeOverSlot,
-            (void*)&TraceHook_TakeoverSlot,
-            "sub_142814760 TAKEOVER_SLOT");
-        char b[128];
-        fmt::snprintf(b, sizeof(b),
-            "[AI_TRACE] hooked sub_142814760 -> %p\r\n",
-            offsets::FnTakeOverSlot);
-        log_line(b);
-    }
-    if (offsets::FnAiStateSync)
-    {
-        ept::install_hook(g_params_stateSync,
-            (unsigned char*)offsets::FnAiStateSync,
-            (void*)&TraceHook_StateSync,
-            "sub_14282B1D0 STATE_SYNC");
-        char b[128];
-        fmt::snprintf(b, sizeof(b),
-            "[AI_TRACE] hooked sub_14282B1D0 -> %p\r\n",
-            offsets::FnAiStateSync);
-        log_line(b);
-    }
 
     log_line("[AI_TRACE] install_all complete\r\n");
 }
