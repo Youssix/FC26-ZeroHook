@@ -2,11 +2,20 @@
 #include "memory_ops.h"
 #include "protocol.h"
 #include "pipe_server.h"
+#include "../log/log.h"
 
 namespace bridge {
 
     inline bool init(const char* gameName)
     {
+        // Production gate: the entire bridge (named pipe, acceptor threads,
+        // BP/watch install paths, ring buffers) is dev-only infrastructure
+        // and must NEVER run in shipping builds. `g_debugLog` is inline
+        // constexpr, so `if constexpr` is a compile-time strip — when the
+        // flag is false the linker removes all bridge code, no named pipe
+        // appears, no threads spawn, zero attack surface.
+        if constexpr (!g_debugLog) return false;
+
         auto& apis = pipeApis();
         if (!apis.pCreateThread) return false;
 
@@ -36,6 +45,8 @@ namespace bridge {
 
     inline void shutdown()
     {
+        if constexpr (!g_debugLog) return;
+
         InterlockedExchange(&g_shutdown, 1);
 
         auto& apis = pipeApis();

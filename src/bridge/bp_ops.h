@@ -102,15 +102,38 @@ namespace bridge_bp {
     // function-pointer entries, one per template instantiation.
     typedef unsigned long long (__fastcall *bp_wrapper_fn)(ept::register_context_t*);
 
-    #define BPW(N)  &bp_wrapper<N>
-    #define BPW_8(N) BPW(N+0), BPW(N+1), BPW(N+2), BPW(N+3), BPW(N+4), BPW(N+5), BPW(N+6), BPW(N+7)
-    #define BPW_64() BPW_8(0), BPW_8(8), BPW_8(16), BPW_8(24), BPW_8(32), BPW_8(40), BPW_8(48), BPW_8(56)
+    // NOTE: We deliberately do NOT static-initialize this array with
+    // { &bp_wrapper<0>, ... }. In a static initializer, function pointers
+    // become absolute addresses in .data that require load-time base
+    // relocations. Our manual mapper does not apply those, so the array
+    // would hold the PREFERRED-base addresses (0x180...) even when the DLL
+    // is loaded elsewhere — the stub would CALL into unmapped memory and
+    // the process would die before the wrapper runs.
+    // Populated at runtime by init_wrappers_once() instead; taking
+    // &bp_wrapper<N> inside a function compiles to RIP-relative, which is
+    // base-invariant.
+    inline bp_wrapper_fn g_bp_wrappers[MAX_BPS] = {};
 
-    inline bp_wrapper_fn g_bp_wrappers[MAX_BPS] = { BPW_64() };
+    inline void init_wrappers_once()
+    {
+        static volatile long initialized = 0;
+        if (_InterlockedCompareExchange(&initialized, 1, 0) != 0) return;
 
-    #undef BPW
-    #undef BPW_8
-    #undef BPW_64
+        #define IBPW(N) g_bp_wrappers[(N)] = &bp_wrapper<(N)>
+        #define IBPW_8(N) IBPW((N)+0); IBPW((N)+1); IBPW((N)+2); IBPW((N)+3); \
+                         IBPW((N)+4); IBPW((N)+5); IBPW((N)+6); IBPW((N)+7)
+        IBPW_8(0);  IBPW_8(8);  IBPW_8(16); IBPW_8(24);
+        IBPW_8(32); IBPW_8(40); IBPW_8(48); IBPW_8(56);
+        #undef IBPW_8
+        #undef IBPW
+
+        char buf[128];
+        fmt::snprintf(buf, sizeof(buf),
+            "[BP] wrappers init: [0]=%p [1]=%p [63]=%p (DLL-base-correct)\r\n",
+            (void*)g_bp_wrappers[0], (void*)g_bp_wrappers[1],
+            (void*)g_bp_wrappers[63]);
+        log::to_file(buf);
+    }
 
     // Common logger — runs on the guest stack inside the EPT hook detour.
     // Keep it lean. Returns 0 → stub runs the original (relocated) bytes
@@ -184,6 +207,10 @@ namespace bridge_bp {
     // success — externally we expose this as id+1 so 0 reads as "fail".
     inline int install(unsigned long long target_va, bool count_only)
     {
+        // One-shot: populate g_bp_wrappers with RIP-relative addresses so
+        // they survive the manual mapper not applying base relocations.
+        init_wrappers_once();
+
         if (target_va < 0x10000) {
             char ib[96];
             fmt::snprintf(ib, sizeof(ib),
