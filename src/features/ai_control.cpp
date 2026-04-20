@@ -560,3 +560,127 @@ bool ai_control::FireAiInputAnnounce()
     else    toast::Show(toast::Type::Error, "InputAnnounce send threw");
     return ok;
 }
+
+namespace
+{
+    // Resolve (matchCtx, captainSlot, mySide) in one go. Returns true if all
+    // three came back valid. Shared by the four A2CB726E test-fire helpers.
+    bool ResolveCtxSlotSide(uintptr_t& ctx, uint32_t& slot, uint32_t& side)
+    {
+        ctx  = GetMatchCtx();
+        if (!ctx) return false;
+        slot = ResolveLocalFieldSlot(ctx);
+        if (slot > 21) return false;
+        side = 0xFFFFFFFFu;
+        __try { side = *reinterpret_cast<uint32_t*>(ctx + 0x23D4); }
+        __except (EXCEPTION_EXECUTE_HANDLER) {}
+        return side == 0 || side == 1;
+    }
+
+    // Common send body. Returns true on clean call, false on any failure.
+    bool SendA2CB(uint32_t team, uint32_t fieldSlot, const char* tag)
+    {
+        uintptr_t rcx = 0;
+        rage::dispatch_fn_t fn = nullptr;
+        if (!rage::get_dispatch(rcx, fn)) {
+            char b[96];
+            fmt::snprintf(b, sizeof(b),
+                "[AI] %s: get_dispatch failed\r\n", tag);
+            log::debug(b);
+            toast::Show(toast::Type::Error, "A2CB: dispatcher unavailable");
+            return false;
+        }
+
+        uint64_t opcode = 0xA2CB726EULL;
+        uint32_t buffer[3] = { team, fieldSlot, 0u };
+
+        hook::g_allow_attack_send = true;
+        bool ok = false;
+        __try {
+            spoof_call(fn, (uint64_t)rcx,
+                       (uint64_t*)&opcode, (uint64_t*)&opcode,
+                       (void*)buffer, (int)12, (char)0xFF, (unsigned char)0);
+            ok = true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            ok = false;
+        }
+        hook::g_allow_attack_send = false;
+
+        char b[192];
+        fmt::snprintf(b, sizeof(b),
+            "[AI] %s: A2CB726E {%08X,%u,0} slot=0xFF param7=0 ok=%d\r\n",
+            tag, team, fieldSlot, ok ? 1 : 0);
+        log::debug(b);
+
+        if (ok) toast::Show(toast::Type::Success, tag);
+        else    toast::Show(toast::Type::Error, "A2CB send threw");
+        return ok;
+    }
+}
+
+bool ai_control::FireA2CBSentinel()
+{
+    uintptr_t ctx; uint32_t slot; uint32_t side;
+    if (!ResolveCtxSlotSide(ctx, slot, side)) {
+        toast::Show(toast::Type::Error, "A2CB sentinel: ctx/slot not ready");
+        return false;
+    }
+    return SendA2CB(0xFFFFFFFFu, slot, "A2CB sentinel {FFFFFFFF,cap,0}");
+}
+
+bool ai_control::FireA2CBTeamHome()
+{
+    uintptr_t ctx; uint32_t slot; uint32_t side;
+    if (!ResolveCtxSlotSide(ctx, slot, side)) {
+        toast::Show(toast::Type::Error, "A2CB home: ctx/slot not ready");
+        return false;
+    }
+    return SendA2CB(side, slot, "A2CB home {mySide,cap,0}");
+}
+
+bool ai_control::FireA2CBTeamOpp()
+{
+    uintptr_t ctx; uint32_t slot; uint32_t side;
+    if (!ResolveCtxSlotSide(ctx, slot, side)) {
+        toast::Show(toast::Type::Error, "A2CB opp: ctx/slot not ready");
+        return false;
+    }
+    return SendA2CB(side ^ 1u, slot, "A2CB opp {oppSide,cap,0}");
+}
+
+bool ai_control::FireA2CBFullSweep()
+{
+    uintptr_t rcx = 0;
+    rage::dispatch_fn_t fn = nullptr;
+    if (!rage::get_dispatch(rcx, fn)) {
+        toast::Show(toast::Type::Error, "A2CB sweep: dispatcher unavailable");
+        return false;
+    }
+
+    uint64_t opcode = 0xA2CB726EULL;
+    int sent = 0;
+    int threw = 0;
+
+    hook::g_allow_attack_send = true;
+    for (uint32_t slot = 0; slot < 22; ++slot) {
+        uint32_t buffer[3] = { 0xFFFFFFFFu, slot, 0u };
+        __try {
+            spoof_call(fn, (uint64_t)rcx,
+                       (uint64_t*)&opcode, (uint64_t*)&opcode,
+                       (void*)buffer, (int)12, (char)0xFF, (unsigned char)0);
+            ++sent;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            ++threw;
+        }
+    }
+    hook::g_allow_attack_send = false;
+
+    char b[160];
+    fmt::snprintf(b, sizeof(b),
+        "[AI] A2CB sweep: 22 slots, sent=%d threw=%d\r\n", sent, threw);
+    log::debug(b);
+
+    toast::Show(sent > 0 ? toast::Type::Success : toast::Type::Error,
+                "A2CB 22-sweep fired");
+    return sent > 0;
+}

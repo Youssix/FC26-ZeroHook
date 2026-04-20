@@ -1158,6 +1158,37 @@ void overlay::Frame(float screenW, float screenH)
                     __try { ai_control::FireAiInputAnnounce(); }
                     __except (EXCEPTION_EXECUTE_HANDLER) {}
                 }
+
+                // 0xA2CB726E flavors — controller-reassign packet. The
+                // game's own natural AFK takeover uses the sentinel form.
+                if (CustomMenu::g_menu.ButtonColored(
+                        "A2CB726E {FFFFFFFF, cap, 0} sentinel",
+                        CustomMenu::Colors::Success, -1, 28))
+                {
+                    __try { ai_control::FireA2CBSentinel(); }
+                    __except (EXCEPTION_EXECUTE_HANDLER) {}
+                }
+                if (CustomMenu::g_menu.ButtonColored(
+                        "A2CB726E {mySide, cap, 0} home-team",
+                        CustomMenu::Colors::Success, -1, 28))
+                {
+                    __try { ai_control::FireA2CBTeamHome(); }
+                    __except (EXCEPTION_EXECUTE_HANDLER) {}
+                }
+                if (CustomMenu::g_menu.ButtonColored(
+                        "A2CB726E {oppSide, cap, 0} opp-team",
+                        CustomMenu::Colors::Warning, -1, 28))
+                {
+                    __try { ai_control::FireA2CBTeamOpp(); }
+                    __except (EXCEPTION_EXECUTE_HANDLER) {}
+                }
+                if (CustomMenu::g_menu.ButtonColored(
+                        "A2CB726E 22-slot sweep {FFFFFFFF, k, 0}",
+                        CustomMenu::Colors::Secondary, -1, 28))
+                {
+                    __try { ai_control::FireA2CBFullSweep(); }
+                    __except (EXCEPTION_EXECUTE_HANDLER) {}
+                }
                 CustomMenu::g_menu.EndSection();
             }
         }

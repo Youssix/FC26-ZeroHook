@@ -85,4 +85,28 @@ namespace ai_control
     // flavor doesn't change anything, this is the other shape seen in the
     // wire traffic — per-frame AI input announce.
     bool FireAiInputAnnounce();
+
+    // ── 0xA2CB726E test fires (4 flavors, all sz=12, slot=0xFF, param7=0) ─
+    //
+    // A2CB726E is the controller-reassign packet — what the game sends
+    // itself during natural AFK takeover. We know peer accepts its natural
+    // form without DC, so firing flavors manually isolates which arg
+    // combination the peer treats as a valid takeover signal vs noise.
+    //
+    // All four resolve matchCtx + our captain field slot automatically.
+
+    // {0xFFFFFFFF, captainSlot, 0} — the FnAfkTakeover sentinel form.
+    bool FireA2CBSentinel();
+
+    // {mySide, captainSlot, 0} — treats our own team as the "receiver";
+    // matches the natural re-broadcast form from sub_14281A4F0.
+    bool FireA2CBTeamHome();
+
+    // {oppSide, captainSlot, 0} — opposite team. Likely rejected but worth
+    // a shot since we've never been able to poke the opponent's slot.
+    bool FireA2CBTeamOpp();
+
+    // 22-packet burst: {0xFFFFFFFF, k, 0} for k in 0..21.
+    // Re-exposes the dormant BroadcastFullAiSweep path under the menu.
+    bool FireA2CBFullSweep();
 }
