@@ -4,6 +4,8 @@
 #include "memory_ops.h"
 #include "../comms/comms.h"
 #include "../hook/ept_hook.h"
+#include "../log/log.h"
+#include "../log/fmt.h"
 
 // Execute breakpoints over EPT hooks. Each BP shares the same logger detour
 // shape but uses a unique templated wrapper so the C function knows which
@@ -122,6 +124,18 @@ namespace bridge_bp {
         // Disabled slots count nothing — minimum overhead.
         if (!slot.enabled) return 0;
 
+        // Crash-survivable trace: if a subsequent access faults, the last
+        // emitted [BP] line in zerohook.log tells us which BP fired last.
+        // Written BEFORE any ring/stack work so a fault in those is visible.
+        {
+            char lb[96];
+            fmt::snprintf(lb, sizeof(lb),
+                "[BP] hit id=%d target=%p rcx=%p rdx=%p rsp=%p\r\n",
+                bp_id, (void*)slot.target_va, (void*)ctx->rcx,
+                (void*)ctx->rdx, (void*)ctx->original_rsp);
+            log::to_file(lb);
+        }
+
         _InterlockedIncrement64(&slot.hits);
 
         if (slot.count_only) return 0;
@@ -170,10 +184,28 @@ namespace bridge_bp {
     // success — externally we expose this as id+1 so 0 reads as "fail".
     inline int install(unsigned long long target_va, bool count_only)
     {
-        if (target_va < 0x10000) return -1;
+        if (target_va < 0x10000) {
+            char ib[96];
+            fmt::snprintf(ib, sizeof(ib),
+                "[BP] install REJECT: target_va=%p < 0x10000\r\n",
+                (void*)target_va);
+            log::to_file(ib);
+            return -1;
+        }
 
         int slot = allocSlot();
-        if (slot < 0) return -1;
+        if (slot < 0) {
+            log::to_file("[BP] install REJECT: no free slot\r\n");
+            return -1;
+        }
+
+        {
+            char ib[96];
+            fmt::snprintf(ib, sizeof(ib),
+                "[BP] install REQ slot=%d target=%p count_only=%d\r\n",
+                slot, (void*)target_va, count_only ? 1 : 0);
+            log::to_file(ib);
+        }
 
         // Zero the params — install_hook fills it in from the relocator.
         bridge::memZero(&g_bp_params[slot].params, sizeof(ept::ept_hook_install_params_t));
@@ -207,6 +239,11 @@ namespace bridge_bp {
                                     (void*)g_bp_wrappers[slot],
                                     nameBuf);
         if (!ok) {
+            char ib[96];
+            fmt::snprintf(ib, sizeof(ib),
+                "[BP] install FAIL slot=%d target=%p\r\n",
+                slot, (void*)target_va);
+            log::to_file(ib);
             g_bp_slots[slot].installed = false;
             g_bp_slots[slot].target_va = 0;
             return -1;
@@ -215,6 +252,15 @@ namespace bridge_bp {
         // Memory barrier so the slot fields land before enable flips on.
         _ReadWriteBarrier();
         _InterlockedExchange(&g_bp_slots[slot].enabled, 1);
+
+        {
+            char ib[96];
+            fmt::snprintf(ib, sizeof(ib),
+                "[BP] install OK slot=%d target=%p wrapper=%p ENABLED\r\n",
+                slot, (void*)target_va, (void*)g_bp_wrappers[slot]);
+            log::to_file(ib);
+        }
+
         return slot;
     }
 

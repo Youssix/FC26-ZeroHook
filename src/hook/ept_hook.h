@@ -137,6 +137,13 @@ namespace ept
         params.relocated_size = reloc_result.size;
         params.fixup_count = reloc_result.fixup_count;
 
+        fmt::snprintf(buf, sizeof(buf),
+            "[ZeroHook] %s reloc: target=%p detour=%p displaced=%u relocated=%u fixups=%u stub=%u\r\n",
+            name, target, detour,
+            reloc_result.displaced_count, reloc_result.size,
+            reloc_result.fixup_count, STUB_SIZE);
+        log::to_file(buf);
+
         for (unsigned int i = 0; i < reloc_result.size; i++)
             params.relocated_bytes[i] = reloc_result.bytes[i];
 
