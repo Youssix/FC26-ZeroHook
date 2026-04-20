@@ -1006,6 +1006,223 @@ def scan_struct_for_pointer(base_address: str, struct_size: int = 0x200) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Watchpoints (NtClose → kernel implant → hypervisor SLAT/EPT)
+# ---------------------------------------------------------------------------
+#
+# Hardware-style watchpoints with no sticky breakpoint, no DR usage, no in-page
+# code modification. Set on physical pages via the hypervisor's SLAT — guest
+# can't see them at all. Useful for tracing what writes a state field, who
+# emits a network opcode, etc.
+#
+# Requires the hypervisor + kernel implant to be loaded on the target box. If
+# they're not, install/remove return NO_IMPLANT_OR_FAIL.
+
+# Access mask bits — see WATCHPOINT_ACCESS_* in src/bridge/watchpoint_ops.h
+WATCH_R = 1
+WATCH_W = 2
+WATCH_X = 4
+
+# Sentinel: follow the cr3_tracker's target process (handles KPTI / cloned CR3
+# transparently). Pass anything else (or 0 for off, or a raw CR3 PFN).
+WATCH_FILTER_TRACKER = 0xFFFFFFFFFFFFFFFF
+
+
+def _parse_access_mask(access: str) -> int:
+    """Parse 'r', 'w', 'x', 'rw', 'rwx' etc. into the bit mask."""
+    a = access.lower().strip()
+    mask = 0
+    if "r" in a: mask |= WATCH_R
+    if "w" in a: mask |= WATCH_W
+    if "x" in a: mask |= WATCH_X
+    return mask
+
+
+def _decode_event(hex_blob: str) -> dict:
+    """Decode one hex-encoded watchpoint_event_t (256 hex chars / 128 bytes)."""
+    raw = bytes.fromhex(hex_blob)
+    if len(raw) != 128:
+        return {"error": f"bad event size {len(raw)}"}
+    (tsc, rip, gcr3, gva, gpa) = struct.unpack_from("<QQQQQ", raw, 0)
+    (access_type, wp_id, cpu_id) = struct.unpack_from("<IHH", raw, 40)
+    (rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi) = struct.unpack_from("<8Q", raw, 48)
+    access_str = {0: "R", 1: "W", 2: "X"}.get(access_type, f"?{access_type}")
+    return {
+        "tsc": tsc, "rip": rip, "cr3": gcr3,
+        "gva": gva, "gpa": gpa,
+        "access": access_str, "wp_id": wp_id, "cpu": cpu_id,
+        "rax": rax, "rcx": rcx, "rdx": rdx, "rbx": rbx,
+        "rsp": rsp, "rbp": rbp, "rsi": rsi, "rdi": rdi,
+    }
+
+
+@mcp.tool()
+def watch_install(address: str, access: str = "rw", length: int = 1,
+                  filter_tracker: bool = True, count_only: bool = False) -> str:
+    """Install a hypervisor watchpoint on a guest virtual address.
+
+    No sticky breakpoint, no DR registers — uses the hypervisor's SLAT to trap
+    accesses transparently. Requires the kernel implant to be loaded.
+
+    Args:
+        address: Hex VA to watch (e.g., '0x14D8953F8' for matchCtx field).
+        access: Any combo of 'r', 'w', 'x' (e.g., 'rw', 'x', 'w').
+        length: Bytes to watch starting at address (1..4096, must stay in page).
+        filter_tracker: If True, only fire when CR3 matches cr3_tracker's
+            target process. If False, fire for all CR3s (noisy).
+        count_only: If True, count hits without recording full events
+            (cheaper, no ring usage).
+
+    Returns watchpoint id on success, or an error message.
+    """
+    if pipe_handle is None:
+        return NOT_CONNECTED_MSG
+
+    mask = _parse_access_mask(access)
+    if mask == 0:
+        return f"BAD ACCESS: {access!r} (use any of 'r','w','x')"
+    if length < 1 or length > 4096:
+        return f"BAD LENGTH: {length} (must be 1..4096)"
+
+    addr = _normalize_address(address)
+    addr_int = int(addr, 16)
+    # Guard against straddling a page boundary — hypervisor watchpoints are
+    # per-page; offset+length must stay within 4096.
+    page_off = addr_int & 0xFFF
+    if page_off + length > 4096:
+        return (f"WATCH range straddles page boundary "
+                f"(page_off=0x{page_off:X} + length={length} > 4096). "
+                "Split into multiple watchpoints.")
+
+    cr3 = WATCH_FILTER_TRACKER if filter_tracker else 0
+    co  = 1 if count_only else 0
+
+    try:
+        data = _send_command(
+            f"WATCH_INSTALL:{addr}:{mask:X}:{length:X}:{cr3:X}:{co:X}"
+        )
+    except RuntimeError as e:
+        return str(e)
+
+    try:
+        wp_id = int(data, 16)
+    except ValueError:
+        return f"Unexpected response: {data!r}"
+
+    return (f"watchpoint installed: id={wp_id} va=0x{addr} mask=0x{mask:X} "
+            f"({access}) length={length} "
+            f"filter={'tracker' if filter_tracker else 'off'} "
+            f"count_only={count_only}")
+
+
+@mcp.tool()
+def watch_remove(watchpoint_id: int) -> str:
+    """Remove a previously installed watchpoint.
+
+    Args:
+        watchpoint_id: ID returned by watch_install.
+    """
+    if pipe_handle is None:
+        return NOT_CONNECTED_MSG
+    if watchpoint_id <= 0:
+        return f"BAD ID: {watchpoint_id}"
+
+    try:
+        data = _send_command(f"WATCH_REMOVE:{watchpoint_id:X}")
+    except RuntimeError as e:
+        return str(e)
+    return f"watchpoint id={watchpoint_id} removed ({data})"
+
+
+@mcp.tool()
+def watch_drain(max_events: int = 64) -> str:
+    """Drain watchpoint events from the current CPU's ring.
+
+    The hypervisor uses per-CPU ring buffers — drain returns events recorded
+    on whichever CPU happens to service the syscall (kernel implant runs on
+    the calling thread's CPU). For comprehensive coverage you may need to pin
+    the bridge thread to specific CPUs and drain each in turn.
+
+    Args:
+        max_events: Maximum events to return (default 64, hard cap 256).
+
+    Returns a formatted table of events: tsc, rip, cr3, access, gva, gpa, regs.
+    """
+    if pipe_handle is None:
+        return NOT_CONNECTED_MSG
+
+    cap = max(1, min(int(max_events), 256))
+
+    try:
+        data = _send_command(f"WATCH_DRAIN:{cap:X}")
+    except RuntimeError as e:
+        return str(e)
+
+    parts = data.split(",")
+    if not parts or parts[0] == "":
+        return "watch_drain: empty response"
+
+    try:
+        count = int(parts[0], 16)
+    except ValueError:
+        return f"watch_drain: bad count {parts[0]!r}"
+
+    if count == 0:
+        return "watch_drain: 0 events"
+
+    events = []
+    for blob in parts[1:1 + count]:
+        try:
+            events.append(_decode_event(blob))
+        except Exception as e:
+            events.append({"error": str(e)})
+
+    lines = [f"watch_drain: {count} event(s)"]
+    for i, ev in enumerate(events):
+        if "error" in ev:
+            lines.append(f"  [{i:3d}] DECODE_ERR: {ev['error']}")
+            continue
+        lines.append(
+            f"  [{i:3d}] wp={ev['wp_id']} cpu={ev['cpu']} {ev['access']} "
+            f"rip=0x{ev['rip']:016X} cr3=0x{ev['cr3']:X} "
+            f"gva=0x{ev['gva']:X} gpa=0x{ev['gpa']:X}"
+        )
+        lines.append(
+            f"        rax={ev['rax']:016X} rcx={ev['rcx']:016X} "
+            f"rdx={ev['rdx']:016X} rbx={ev['rbx']:016X}"
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def watch_stats(watchpoint_id: int) -> str:
+    """Get hit/dropped counters for a watchpoint.
+
+    Args:
+        watchpoint_id: ID returned by watch_install.
+    """
+    if pipe_handle is None:
+        return NOT_CONNECTED_MSG
+    if watchpoint_id <= 0:
+        return f"BAD ID: {watchpoint_id}"
+
+    try:
+        data = _send_command(f"WATCH_STATS:{watchpoint_id:X}")
+    except RuntimeError as e:
+        return str(e)
+
+    parts = data.split(",")
+    if len(parts) != 2:
+        return f"watch_stats: unexpected response {data!r}"
+    try:
+        hits    = int(parts[0], 16)
+        dropped = int(parts[1], 16)
+    except ValueError:
+        return f"watch_stats: bad numbers {data!r}"
+
+    return f"watchpoint id={watchpoint_id}: hits={hits} dropped={dropped}"
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 

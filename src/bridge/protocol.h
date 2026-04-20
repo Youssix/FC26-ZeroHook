@@ -1,6 +1,7 @@
 #pragma once
 #include <Windows.h>
 #include "memory_ops.h"
+#include "watchpoint_ops.h"
 #include "../log/fmt.h"
 
 namespace bridge {
@@ -221,6 +222,124 @@ namespace bridge {
         if (strCmp(cmd->cmd, "SCAN_RESET") == 0) {
             scanReset(scanState);
             return buildResponse(responseBuf, responseMax, true, nullptr);
+        }
+
+        // ── Watchpoints (NtClose → kernel implant → hypervisor) ───────────
+        // All return ERR:NO_IMPLANT if the kernel implant isn't loaded.
+
+        // WATCH_INSTALL:target_va:access_mask:length:filter_cr3[:count_only]
+        // access_mask: bit0=R bit1=W bit2=X. length 1..4096. filter_cr3 0=off,
+        // FFFFFFFFFFFFFFFF=cr3_tracker, else raw PFN.
+        if (strCmp(cmd->cmd, "WATCH_INSTALL") == 0) {
+            if (cmd->argCount < 4)
+                return buildResponse(responseBuf, responseMax, false, "BAD_ARGS");
+
+            uintptr_t target_va  = parseHex(cmd->args[0], strLen(cmd->args[0]));
+            unsigned char  access_mask = (unsigned char)parseHex(cmd->args[1], strLen(cmd->args[1]));
+            unsigned int   length      = (unsigned int)parseHex(cmd->args[2], strLen(cmd->args[2]));
+            unsigned long long filter_cr3 = parseHex(cmd->args[3], strLen(cmd->args[3]));
+            unsigned char  count_only  = 0;
+            if (cmd->argCount >= 5)
+                count_only = (unsigned char)parseHex(cmd->args[4], strLen(cmd->args[4]));
+
+            if (target_va < 0x10000)
+                return buildResponse(responseBuf, responseMax, false, "BAD_ADDR");
+            if (length == 0 || length > 4096)
+                return buildResponse(responseBuf, responseMax, false, "BAD_LENGTH");
+            if (access_mask == 0 || (access_mask & ~0x07) != 0)
+                return buildResponse(responseBuf, responseMax, false, "BAD_ACCESS");
+
+            // Page-relative offset is implicit from VA & 0xFFF.
+            unsigned short offset_in_page = (unsigned short)(target_va & 0xFFF);
+            unsigned short length_in_page = (unsigned short)length;
+
+            unsigned short id = watchInstall(target_va,
+                                              access_mask,
+                                              offset_in_page,
+                                              length_in_page,
+                                              filter_cr3,
+                                              count_only);
+            if (id == 0)
+                return buildResponse(responseBuf, responseMax, false, "NO_IMPLANT_OR_FAIL");
+
+            char outBuf[16];
+            fmt::snprintf(outBuf, sizeof(outBuf), "%X", (unsigned int)id);
+            return buildResponse(responseBuf, responseMax, true, outBuf);
+        }
+
+        // WATCH_REMOVE:id
+        if (strCmp(cmd->cmd, "WATCH_REMOVE") == 0) {
+            if (cmd->argCount < 1)
+                return buildResponse(responseBuf, responseMax, false, "BAD_ARGS");
+
+            unsigned short id = (unsigned short)parseHex(cmd->args[0], strLen(cmd->args[0]));
+            if (id == 0)
+                return buildResponse(responseBuf, responseMax, false, "BAD_ID");
+
+            unsigned long long ok = watchRemove(id);
+            if (!ok)
+                return buildResponse(responseBuf, responseMax, false, "NO_IMPLANT_OR_FAIL");
+            return buildResponse(responseBuf, responseMax, true, "1");
+        }
+
+        // WATCH_DRAIN[:max_events]   (default 64, hard cap 256)
+        // Response: count_hex,event0_hex,event1_hex,...  (each event = 256 hex chars / 128 bytes)
+        if (strCmp(cmd->cmd, "WATCH_DRAIN") == 0) {
+            unsigned int max_events = 64;
+            if (cmd->argCount >= 1 && strLen(cmd->args[0]) > 0)
+                max_events = (unsigned int)parseHex(cmd->args[0], strLen(cmd->args[0]));
+            if (max_events == 0) max_events = 64;
+            if (max_events > 256) max_events = 256;
+
+            // 256 events * 128B = 32KB; well under the 128KB response cap.
+            static watchpoint_event_t s_events[256];
+            memZero(s_events, (int)(max_events * sizeof(watchpoint_event_t)));
+
+            unsigned long long copied = watchDrain(s_events, max_events);
+            // copied == 0 might be "no events" (legit) OR "implant absent". The
+            // implant-absent path also returns 0 from req.result, so we have
+            // no way here to distinguish. The Python tool can interpret 0 as
+            // "no events available" — install/remove pre-checks already catch
+            // the implant-absent case loudly.
+
+            // Build response: count,event0,event1,...
+            static char outBuf[0x20000];
+            int pos = 0;
+
+            char countHex[16];
+            fmt::snprintf(countHex, sizeof(countHex), "%llX", copied);
+            for (int j = 0; countHex[j] && pos < (int)sizeof(outBuf) - 1; j++)
+                outBuf[pos++] = countHex[j];
+
+            for (unsigned long long i = 0; i < copied && pos < (int)sizeof(outBuf) - 260; i++) {
+                if (pos < (int)sizeof(outBuf) - 1) outBuf[pos++] = ',';
+                char evHex[260]; // 128*2 + nul
+                hexEncode(&s_events[i], (int)sizeof(watchpoint_event_t),
+                          evHex, sizeof(evHex));
+                for (int j = 0; evHex[j] && pos < (int)sizeof(outBuf) - 1; j++)
+                    outBuf[pos++] = evHex[j];
+            }
+            outBuf[pos] = '\0';
+
+            return buildResponse(responseBuf, responseMax, true, outBuf);
+        }
+
+        // WATCH_STATS:id   → returns hits_hex,dropped_hex
+        if (strCmp(cmd->cmd, "WATCH_STATS") == 0) {
+            if (cmd->argCount < 1)
+                return buildResponse(responseBuf, responseMax, false, "BAD_ARGS");
+
+            unsigned short id = (unsigned short)parseHex(cmd->args[0], strLen(cmd->args[0]));
+            if (id == 0)
+                return buildResponse(responseBuf, responseMax, false, "BAD_ID");
+
+            unsigned long long packed = watchStats(id);
+            unsigned int hits    = (unsigned int)(packed >> 32);
+            unsigned int dropped = (unsigned int)(packed & 0xFFFFFFFFu);
+
+            char outBuf[40];
+            fmt::snprintf(outBuf, sizeof(outBuf), "%X,%X", hits, dropped);
+            return buildResponse(responseBuf, responseMax, true, outBuf);
         }
 
         return buildResponse(responseBuf, responseMax, false, "UNKNOWN_CMD");
