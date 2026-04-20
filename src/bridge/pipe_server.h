@@ -58,27 +58,123 @@ namespace bridge {
     inline HANDLE g_thread = nullptr;
     inline char g_pipeName[64] = {};
 
-    // ── Pipe server thread ───────────────────────────────────────────────
+    // Per-client state. Each accepted connection gets its own slot with an
+    // isolated scan state so concurrent clients don't clobber each other's
+    // search results. Fixed-size pool avoids any allocator call on accept.
+    constexpr int MAX_CLIENTS = 8;
+    struct ClientSlot {
+        volatile long inUse;
+        HANDLE        pipe;
+        ScanState     scanState;
+    };
+    inline ClientSlot g_clientSlots[MAX_CLIENTS] = {};
+
+    // ── Per-client handler thread ────────────────────────────────────────
+    inline DWORD __stdcall clientThread(void* param)
+    {
+        auto& apis = pipeApis();
+        ClientSlot* slot = (ClientSlot*)param;
+        HANDLE hPipe = slot->pipe;
+
+        char logBuf[128];
+        fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] Client thread started (slot=%d)\n",
+                      (int)(slot - g_clientSlots));
+        log::to_file(logBuf);
+
+        char readBuf[4096];
+        int readPos = 0;
+
+        while (!InterlockedCompareExchange(&g_shutdown, 0, 0)) {
+            DWORD bytesRead = 0;
+            BOOL ok = apis.pReadFile(hPipe, readBuf + readPos,
+                                     (DWORD)(sizeof(readBuf) - readPos - 1), &bytesRead, nullptr);
+            if (!ok || bytesRead == 0) break;  // disconnect / error
+
+            readPos += bytesRead;
+            readBuf[readPos] = '\0';
+
+            while (true) {
+                int nlPos = -1;
+                for (int i = 0; i < readPos; i++) {
+                    if (readBuf[i] == '\n') { nlPos = i; break; }
+                }
+                if (nlPos < 0) break;
+
+                Command cmd;
+                char responseBuf[0x20000];
+                int responseLen = 0;
+
+                if (parseCommand(readBuf, nlPos + 1, &cmd)) {
+                    responseLen = processCommand(&cmd, responseBuf, sizeof(responseBuf),
+                                                 &slot->scanState);
+                } else {
+                    responseLen = buildResponse(responseBuf, sizeof(responseBuf), false, "PARSE_ERROR");
+                }
+
+                if (responseLen > 0) {
+                    DWORD written = 0;
+                    apis.pWriteFile(hPipe, responseBuf, responseLen, &written, nullptr);
+                    apis.pFlushFileBuffers(hPipe);
+                }
+
+                int consumed = nlPos + 1;
+                int remaining = readPos - consumed;
+                if (remaining > 0) {
+                    for (int i = 0; i < remaining; i++)
+                        readBuf[i] = readBuf[consumed + i];
+                }
+                readPos = remaining;
+            }
+
+            if (readPos >= (int)sizeof(readBuf) - 1) readPos = 0;  // overflow guard
+        }
+
+        // Cleanup this client's connection + scan state, release slot.
+        apis.pDisconnectNamedPipe(hPipe);
+        apis.pCloseHandle(hPipe);
+        scanReset(&slot->scanState);
+        slot->pipe = nullptr;
+        _InterlockedExchange(&slot->inUse, 0);
+
+        fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] Client disconnected (slot=%d)\n",
+                      (int)(slot - g_clientSlots));
+        log::to_file(logBuf);
+        return 0;
+    }
+
+    // Find a free client slot. Returns index or -1.
+    inline int allocClientSlot()
+    {
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (_InterlockedCompareExchange(&g_clientSlots[i].inUse, 1, 0) == 0)
+                return i;
+        }
+        return -1;
+    }
+
+    // ── Pipe accept thread ───────────────────────────────────────────────
     inline DWORD __stdcall pipeThread(void* param)
     {
         (void)param;
         auto& apis = pipeApis();
-        ScanState scanState = {};
 
         char logBuf[256];
-        fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] Pipe thread started: %s\n", g_pipeName);
+        fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] Pipe accept thread started: %s (max %d clients)\n",
+                      g_pipeName, MAX_CLIENTS);
         log::to_file(logBuf);
 
         while (!InterlockedCompareExchange(&g_shutdown, 0, 0)) {
-            // Create named pipe
+            // Create a new pipe instance for the next client. Unlimited
+            // instances so multiple clients can coexist (MCP + debug script
+            // + CLI, etc.). Each accept spawns a dedicated thread.
             HANDLE hPipe = apis.pCreateNamedPipeA(
                 g_pipeName,
                 PIPE_ACCESS_DUPLEX,
                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                1,      // max instances
-                65536,  // out buffer
-                65536,  // in buffer
-                0,      // default timeout
+                PIPE_UNLIMITED_INSTANCES,
+                65536,
+                65536,
+                0,
                 nullptr
             );
 
@@ -89,10 +185,7 @@ namespace bridge {
                 continue;
             }
 
-            fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] Waiting for client...\n");
-            log::to_file(logBuf);
-
-            // Block until a client connects
+            // Block until a client connects.
             BOOL connected = apis.pConnectNamedPipe(hPipe, nullptr);
             if (!connected && GetLastError() != ERROR_PIPE_CONNECTED) {
                 apis.pCloseHandle(hPipe);
@@ -100,81 +193,41 @@ namespace bridge {
                 continue;
             }
 
-            fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] Client connected\n");
-            log::to_file(logBuf);
-
-            // Read loop: accumulate data until \n
-            char readBuf[4096];
-            int readPos = 0;
-
-            while (!InterlockedCompareExchange(&g_shutdown, 0, 0)) {
-                DWORD bytesRead = 0;
-                BOOL ok = apis.pReadFile(hPipe, readBuf + readPos,
-                                         (DWORD)(sizeof(readBuf) - readPos - 1), &bytesRead, nullptr);
-                if (!ok || bytesRead == 0) {
-                    // Client disconnected or error
-                    break;
-                }
-
-                readPos += bytesRead;
-                readBuf[readPos] = '\0';
-
-                // Process all complete lines in the buffer
-                while (true) {
-                    // Find newline
-                    int nlPos = -1;
-                    for (int i = 0; i < readPos; i++) {
-                        if (readBuf[i] == '\n') { nlPos = i; break; }
-                    }
-                    if (nlPos < 0) break; // no complete line yet
-
-                    // Parse and process command
-                    Command cmd;
-                    char responseBuf[0x20000];
-                    int responseLen = 0;
-
-                    if (parseCommand(readBuf, nlPos + 1, &cmd)) {
-                        responseLen = processCommand(&cmd, responseBuf, sizeof(responseBuf), &scanState);
-                    } else {
-                        responseLen = buildResponse(responseBuf, sizeof(responseBuf), false, "PARSE_ERROR");
-                    }
-
-                    // Write response
-                    if (responseLen > 0) {
-                        DWORD written = 0;
-                        apis.pWriteFile(hPipe, responseBuf, responseLen, &written, nullptr);
-                        apis.pFlushFileBuffers(hPipe);
-                    }
-
-                    // Shift remaining data to front of buffer
-                    int consumed = nlPos + 1;
-                    int remaining = readPos - consumed;
-                    if (remaining > 0) {
-                        for (int i = 0; i < remaining; i++)
-                            readBuf[i] = readBuf[consumed + i];
-                    }
-                    readPos = remaining;
-                }
-
-                // Prevent overflow
-                if (readPos >= (int)sizeof(readBuf) - 1) {
-                    // Command too long, reset buffer
-                    readPos = 0;
-                }
+            // Allocate a slot and spawn a handler thread.
+            int slotIdx = allocClientSlot();
+            if (slotIdx < 0) {
+                fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] Client pool full — rejecting\n");
+                log::to_file(logBuf);
+                apis.pDisconnectNamedPipe(hPipe);
+                apis.pCloseHandle(hPipe);
+                continue;
             }
 
-            // Client disconnected — cleanup and loop back
-            apis.pDisconnectNamedPipe(hPipe);
-            apis.pCloseHandle(hPipe);
+            g_clientSlots[slotIdx].pipe = hPipe;
+            g_clientSlots[slotIdx].scanState = {};
 
-            fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] Client disconnected\n");
+            HANDLE hClient = apis.pCreateThread(nullptr, 0,
+                                                (LPTHREAD_START_ROUTINE)clientThread,
+                                                &g_clientSlots[slotIdx], 0, nullptr);
+            if (!hClient) {
+                fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] CreateThread failed for slot %d\n", slotIdx);
+                log::to_file(logBuf);
+                apis.pDisconnectNamedPipe(hPipe);
+                apis.pCloseHandle(hPipe);
+                g_clientSlots[slotIdx].pipe = nullptr;
+                _InterlockedExchange(&g_clientSlots[slotIdx].inUse, 0);
+                continue;
+            }
+
+            // Detach — the thread owns cleanup.
+            apis.pCloseHandle(hClient);
+
+            fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] Client accepted → slot %d\n", slotIdx);
             log::to_file(logBuf);
+            // Loop back immediately to create the next pipe instance.
         }
 
-        // Cleanup scan state before exiting
-        scanReset(&scanState);
-
-        fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] Pipe thread exiting\n");
+        fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] Pipe accept thread exiting\n");
         log::to_file(logBuf);
         return 0;
     }
