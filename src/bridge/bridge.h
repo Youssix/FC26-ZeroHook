@@ -19,11 +19,17 @@ namespace bridge {
 
         InterlockedExchange(&g_shutdown, 0);
 
-        g_thread = apis.pCreateThread(nullptr, 0, (LPTHREAD_START_ROUTINE)pipeThread, nullptr, 0, nullptr);
-        if (!g_thread) return false;
+        int spawned = 0;
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            g_acceptors[i] = apis.pCreateThread(nullptr, 0,
+                (LPTHREAD_START_ROUTINE)acceptorThread, nullptr, 0, nullptr);
+            if (g_acceptors[i]) spawned++;
+        }
+        if (spawned == 0) return false;
 
-        char logBuf[128];
-        fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] Started on %s\n", g_pipeName);
+        char logBuf[160];
+        fmt::snprintf(logBuf, sizeof(logBuf),
+            "[bridge] Started on %s (%d acceptor threads)\n", g_pipeName, spawned);
         log::to_file(logBuf);
         return true;
     }
@@ -33,10 +39,12 @@ namespace bridge {
         InterlockedExchange(&g_shutdown, 1);
 
         auto& apis = pipeApis();
-        if (g_thread && apis.pWaitForSingleObject) {
-            apis.pWaitForSingleObject(g_thread, 2000);
-            if (apis.pCloseHandle) apis.pCloseHandle(g_thread);
-            g_thread = nullptr;
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (g_acceptors[i] && apis.pWaitForSingleObject) {
+                apis.pWaitForSingleObject(g_acceptors[i], 2000);
+                if (apis.pCloseHandle) apis.pCloseHandle(g_acceptors[i]);
+                g_acceptors[i] = nullptr;
+            }
         }
 
         char logBuf[64];

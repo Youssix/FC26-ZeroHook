@@ -11,6 +11,7 @@ import struct
 # Try to import pywin32 - only available on Windows
 try:
     import win32file
+    import win32pipe
     import win32api
     import pywintypes
     WINDOWS = True
@@ -38,23 +39,25 @@ def _pipe_name(game: str) -> str:
 
 
 def _find_pipes() -> list[str]:
-    """Return list of game names with active zerohook pipes."""
+    """Return list of game names with active zerohook pipes.
+
+    Uses WaitNamedPipe (not CreateFile) so probing doesn't burn a server-side
+    instance: opening with CreateFile counts as a real client connection,
+    triggers an accept/disconnect cycle, and races with subsequent connects.
+    WaitNamedPipe just queries availability.
+    """
     found = []
     if not WINDOWS:
         return found
     for game in KNOWN_GAMES:
         try:
-            h = win32file.CreateFile(
-                _pipe_name(game),
-                win32file.GENERIC_READ | win32file.GENERIC_WRITE,
-                0, None,
-                win32file.OPEN_EXISTING,
-                0, None,
-            )
-            win32file.CloseHandle(h)
+            win32pipe.WaitNamedPipe(_pipe_name(game), 50)
             found.append(game)
-        except Exception:
-            pass
+        except pywintypes.error as e:
+            # ERROR_SEM_TIMEOUT (121) = pipe exists but momentarily no free
+            # instance — still alive. Anything else (FILE_NOT_FOUND etc.) = no.
+            if e.winerror == 121:
+                found.append(game)
     return found
 
 

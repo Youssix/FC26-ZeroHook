@@ -55,7 +55,6 @@ namespace bridge {
 
     // ── Global state ─────────────────────────────────────────────────────
     inline volatile long g_shutdown = 0;
-    inline HANDLE g_thread = nullptr;
     inline char g_pipeName[64] = {};
 
     // Per-client state. Each accepted connection gets its own slot with an
@@ -68,6 +67,13 @@ namespace bridge {
         ScanState     scanState;
     };
     inline ClientSlot g_clientSlots[MAX_CLIENTS] = {};
+
+    // One acceptor thread per client slot. Each acceptor independently
+    // creates a pipe instance and blocks in ConnectNamedPipe, so MAX_CLIENTS
+    // listeners are always ready. Without this, only one instance exists at
+    // a time and any second client trying to connect during the brief window
+    // between accept and the next CreateNamedPipe call gets ERROR_PIPE_BUSY.
+    inline HANDLE g_acceptors[MAX_CLIENTS] = {};
 
     // ── Per-client handler thread ────────────────────────────────────────
     inline DWORD __stdcall clientThread(void* param)
@@ -153,15 +159,15 @@ namespace bridge {
     }
 
     // ── Pipe accept thread ───────────────────────────────────────────────
-    inline DWORD __stdcall pipeThread(void* param)
+    // Each acceptor maintains exactly one listening pipe instance. We spawn
+    // MAX_CLIENTS of these from bridge::init so that many listeners are
+    // always blocked in ConnectNamedPipe simultaneously.
+    inline DWORD __stdcall acceptorThread(void* param)
     {
         (void)param;
         auto& apis = pipeApis();
 
         char logBuf[256];
-        fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] Pipe accept thread started: %s (max %d clients)\n",
-                      g_pipeName, MAX_CLIENTS);
-        log::to_file(logBuf);
 
         while (!InterlockedCompareExchange(&g_shutdown, 0, 0)) {
             // Create a new pipe instance for the next client. Unlimited
