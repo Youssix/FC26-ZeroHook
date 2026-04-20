@@ -1140,6 +1140,24 @@ void overlay::Frame(float screenW, float screenH)
                     s_lastForceAfk = (bool)ai_control::g_forceAfkPath;
                     ai_control::ApplyForceAfkPath(s_lastForceAfk);
                 }
+
+                // One-shot test buttons for the 0xE81D3B4C hypothesis.
+                // Each button fires a single packet with a different payload
+                // flavor seen in the working-takeover logs.
+                if (CustomMenu::g_menu.ButtonColored(
+                        "Fire 0xE81D3B4C {0,0,1}",
+                        CustomMenu::Colors::Primary, -1, 28))
+                {
+                    __try { ai_control::FireAiHeartbeat(); }
+                    __except (EXCEPTION_EXECUTE_HANDLER) {}
+                }
+                if (CustomMenu::g_menu.ButtonColored(
+                        "Fire 0xE81D3B4C {1.0f,1.0f,1}",
+                        CustomMenu::Colors::Primary, -1, 28))
+                {
+                    __try { ai_control::FireAiInputAnnounce(); }
+                    __except (EXCEPTION_EXECUTE_HANDLER) {}
+                }
                 CustomMenu::g_menu.EndSection();
             }
         }

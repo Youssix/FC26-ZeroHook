@@ -73,4 +73,16 @@ namespace ai_control
 
     // Fire for the opponent side (slot = opposite of playerside).
     bool SendDisableOpponentAi();
+
+    // Test: fire a single 0xE81D3B4C packet with payload {0, 0, 1} (sz=12,
+    // slot=0xFF, param7=0). Hypothesis: this is the AI-driver heartbeat /
+    // takeover-ACK packet that the peer expects after a natural AFK
+    // takeover. Working-tool logs show it; ours don't.
+    bool FireAiHeartbeat();
+
+    // Variant: the joystick/axis-input flavor seen in working logs —
+    // payload {1.0f, 1.0f, 1} (12B: float, float, uint32). If the handshake
+    // flavor doesn't change anything, this is the other shape seen in the
+    // wire traffic — per-frame AI input announce.
+    bool FireAiInputAnnounce();
 }

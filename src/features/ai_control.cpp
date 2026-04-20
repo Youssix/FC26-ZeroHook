@@ -478,3 +478,85 @@ bool ai_control::SendDisableOpponentAi()
     // approach (e.g., server-authoritative AFK-takeover packet replay).
     return false;
 }
+
+bool ai_control::FireAiHeartbeat()
+{
+    // Payload guess based on working-tool log diff: 12 bytes, {0, 0, 1}.
+    // Seen RetAddrs in working logs: 0x14218E1E9, 0x14291EDAD, 0x1450965A5,
+    // 0x14566B436. All go through the same dispatcher we use for other
+    // 0xA2CB726E-style sends. If the hypothesis holds, peer should see this
+    // as "AI driver is now driving this slot — heartbeat".
+    uintptr_t rcx = 0;
+    rage::dispatch_fn_t fn = nullptr;
+    if (!rage::get_dispatch(rcx, fn)) {
+        log::debug("[AI] FireAiHeartbeat: get_dispatch failed\r\n");
+        toast::Show(toast::Type::Error, "Heartbeat: dispatcher unavailable");
+        return false;
+    }
+
+    uint64_t opcode = 0xE81D3B4CULL;
+    uint32_t buffer[3] = { 0u, 0u, 1u };
+
+    hook::g_allow_attack_send = true;
+    bool ok = false;
+    __try {
+        spoof_call(fn, (uint64_t)rcx,
+                   (uint64_t*)&opcode, (uint64_t*)&opcode,
+                   (void*)buffer, (int)12, (char)0xFF, (unsigned char)0);
+        ok = true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        ok = false;
+    }
+    hook::g_allow_attack_send = false;
+
+    char b[128];
+    fmt::snprintf(b, sizeof(b),
+        "[AI] FireAiHeartbeat: opcode=0xE81D3B4C sz=12 buf={0,0,1} ok=%d\r\n",
+        ok ? 1 : 0);
+    log::debug(b);
+
+    if (ok) toast::Show(toast::Type::Success, "Heartbeat 0xE81D3B4C sent");
+    else    toast::Show(toast::Type::Error, "Heartbeat send threw");
+    return ok;
+}
+
+bool ai_control::FireAiInputAnnounce()
+{
+    // Joystick/axis flavor from the working logs:
+    //   0000803F 0000803F 01000000   =  {1.0f, 1.0f, 1u}
+    // Matches the per-frame AI input announce shape. If the flat handshake
+    // doesn't trip the peer's ACK, this is the other candidate — a
+    // simulated "AI is actively driving with max stick" input.
+    uintptr_t rcx = 0;
+    rage::dispatch_fn_t fn = nullptr;
+    if (!rage::get_dispatch(rcx, fn)) {
+        log::debug("[AI] FireAiInputAnnounce: get_dispatch failed\r\n");
+        toast::Show(toast::Type::Error, "InputAnnounce: dispatcher unavailable");
+        return false;
+    }
+
+    uint64_t opcode = 0xE81D3B4CULL;
+    struct { float x; float y; uint32_t flag; } payload = { 1.0f, 1.0f, 1u };
+
+    hook::g_allow_attack_send = true;
+    bool ok = false;
+    __try {
+        spoof_call(fn, (uint64_t)rcx,
+                   (uint64_t*)&opcode, (uint64_t*)&opcode,
+                   (void*)&payload, (int)12, (char)0xFF, (unsigned char)0);
+        ok = true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        ok = false;
+    }
+    hook::g_allow_attack_send = false;
+
+    char b[128];
+    fmt::snprintf(b, sizeof(b),
+        "[AI] FireAiInputAnnounce: opcode=0xE81D3B4C sz=12 buf={1.0f,1.0f,1} ok=%d\r\n",
+        ok ? 1 : 0);
+    log::debug(b);
+
+    if (ok) toast::Show(toast::Type::Success, "InputAnnounce 0xE81D3B4C sent");
+    else    toast::Show(toast::Type::Error, "InputAnnounce send threw");
+    return ok;
+}
