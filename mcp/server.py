@@ -1223,6 +1223,257 @@ def watch_stats(watchpoint_id: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Execute breakpoints (EPT hooks → C detour in bridge DLL → ring buffer)
+# ---------------------------------------------------------------------------
+#
+# Each BP captures full register state + 4 stack frames + a TSC timestamp.
+# Slot count is fixed (64 in the bridge); ring is 1024 events. Drain returns
+# the latest N events in chronological order.
+#
+# Detection profile: single E9 patched into the EPT exec view, no INT3, no
+# DR usage, no Win32 alloc. Stub page lives in hypervisor-managed runtime
+# heap invisible to guest scans.
+
+BP_EVENT_HEX_LEN = 384  # 192 bytes * 2
+
+
+def _decode_bp_event(hex_blob: str) -> dict:
+    """Decode one hex-encoded bp_event_t (384 hex chars / 192 bytes)."""
+    raw = bytes.fromhex(hex_blob)
+    if len(raw) != 192:
+        return {"error": f"bad event size {len(raw)}"}
+    (tsc, target_va, original_rsp, rflags) = struct.unpack_from("<QQQQ", raw, 0)
+    (rax, rcx, rdx, rbx, rbp, rsi, rdi)    = struct.unpack_from("<7Q", raw, 32)
+    (r8, r9, r10, r11, r12, r13, r14, r15) = struct.unpack_from("<8Q", raw, 88)
+    stack = list(struct.unpack_from("<4Q", raw, 152))
+    (bp_id, cpu_id, _reserved)             = struct.unpack_from("<HHI", raw, 184)
+    return {
+        "tsc": tsc, "target_va": target_va,
+        "rsp": original_rsp, "rflags": rflags,
+        "rax": rax, "rcx": rcx, "rdx": rdx, "rbx": rbx,
+        "rbp": rbp, "rsi": rsi, "rdi": rdi,
+        "r8": r8, "r9": r9, "r10": r10, "r11": r11,
+        "r12": r12, "r13": r13, "r14": r14, "r15": r15,
+        "stack": stack, "bp_id": bp_id, "cpu_id": cpu_id,
+    }
+
+
+@mcp.tool()
+def bp_install(target: str, module: str = "", count_only: bool = False) -> str:
+    """Install an execute breakpoint via EPT hook in the bridge DLL.
+
+    Two ways to specify the address:
+      bp_install("0x14282BB00")                    — absolute VA
+      bp_install("0x282BB00", module="FC26.exe")   — module-relative RVA
+
+    Module-relative is recommended for anything that should survive game
+    updates (the bridge resolves the base via PEB walk at install time).
+
+    Args:
+        target: Absolute VA, OR an RVA when module is set. Hex with or
+            without leading 0x.
+        module: Optional module name (e.g. "FC26.exe"). When set, target
+            is treated as an RVA added to the resolved module base.
+        count_only: If True, every hit only bumps the counter (no ring
+            entry). Use for hot functions where you just want a hit-rate.
+
+    Returns: "BP installed: id=N target=0x..." on success.
+    """
+    if pipe_handle is None:
+        return NOT_CONNECTED_MSG
+
+    co = "1" if count_only else "0"
+    addr = _normalize_address(target)
+
+    if module:
+        cmd = f"BP_INSTALL:{module}:{addr}:{co}"
+    else:
+        cmd = f"BP_INSTALL:{addr}:{co}"
+
+    try:
+        data = _send_command(cmd)
+    except RuntimeError as e:
+        return str(e)
+
+    parts = data.split(",")
+    if len(parts) < 2:
+        return f"BP install: unexpected response {data!r}"
+    try:
+        bp_id  = int(parts[0], 16)
+        ptr_va = int(parts[1], 16)
+    except ValueError:
+        return f"BP install: bad numbers {data!r}"
+
+    return (f"BP installed: id={bp_id} target=0x{ptr_va:016X} "
+            f"{'(count-only)' if count_only else '(full capture)'}")
+
+
+@mcp.tool()
+def bp_remove(bp_id: int) -> str:
+    """Disable a breakpoint and free its slot. The EPT shadow page stays
+    patched but the wrapper short-circuits via the disabled flag — zero
+    observable effect on the game from there on.
+
+    Args:
+        bp_id: The id returned by bp_install.
+    """
+    if pipe_handle is None:
+        return NOT_CONNECTED_MSG
+    if bp_id <= 0:
+        return f"BAD ID: {bp_id}"
+    try:
+        _send_command(f"BP_REMOVE:{bp_id:X}")
+        return f"BP id={bp_id} removed"
+    except RuntimeError as e:
+        return str(e)
+
+
+@mcp.tool()
+def bp_enable(bp_id: int, enabled: bool = True) -> str:
+    """Toggle a BP without removing it. Cheap — just flips a flag the
+    wrapper reads. Use this to silence a noisy hot-function BP between
+    drains.
+
+    Args:
+        bp_id: The id returned by bp_install.
+        enabled: True to enable (capture hits), False to silence.
+    """
+    if pipe_handle is None:
+        return NOT_CONNECTED_MSG
+    if bp_id <= 0:
+        return f"BAD ID: {bp_id}"
+    val = "1" if enabled else "0"
+    try:
+        data = _send_command(f"BP_ENABLE:{bp_id:X}:{val}")
+        return f"BP id={bp_id}: {data}"
+    except RuntimeError as e:
+        return str(e)
+
+
+@mcp.tool()
+def bp_drain(max_events: int = 64) -> str:
+    """Return the latest N captured BP events in chronological order.
+
+    Each event has: tsc, target_va, rip-equivalent, rsp, rflags, all 16
+    GPRs, top 4 return addresses on the stack, bp_id, cpu_id.
+
+    Args:
+        max_events: Up to 256 per call (hard cap). Default 64.
+    """
+    if pipe_handle is None:
+        return NOT_CONNECTED_MSG
+
+    cap = max(1, min(int(max_events), 256))
+    try:
+        data = _send_command(f"BP_DRAIN:{cap:X}")
+    except RuntimeError as e:
+        return str(e)
+
+    parts = data.split(",")
+    if not parts or parts[0] == "":
+        return "bp_drain: empty response"
+    try:
+        count = int(parts[0], 16)
+    except ValueError:
+        return f"bp_drain: bad count {parts[0]!r}"
+    if count == 0:
+        return "bp_drain: 0 events captured since last install/drain"
+
+    events = []
+    for blob in parts[1:1 + count]:
+        try:
+            events.append(_decode_bp_event(blob))
+        except Exception as e:
+            events.append({"error": str(e)})
+
+    lines = [f"bp_drain: {count} event(s)"]
+    for i, ev in enumerate(events):
+        if "error" in ev:
+            lines.append(f"  [{i:3d}] DECODE_ERR: {ev['error']}")
+            continue
+        stack_str = " → ".join(f"0x{ra:X}" for ra in ev["stack"] if ra)
+        lines.append(
+            f"  [{i:3d}] bp={ev['bp_id']} tsc={ev['tsc']} "
+            f"@0x{ev['target_va']:016X} "
+            f"rcx=0x{ev['rcx']:X} rdx=0x{ev['rdx']:X} "
+            f"r8=0x{ev['r8']:X} r9=0x{ev['r9']:X}"
+        )
+        lines.append(
+            f"        rsp=0x{ev['rsp']:X} rflags=0x{ev['rflags']:X}"
+        )
+        if stack_str:
+            lines.append(f"        callers: {stack_str}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def bp_stats(bp_id: int) -> str:
+    """Show hit/dropped counters and current enabled state for a BP.
+
+    Args:
+        bp_id: The id returned by bp_install.
+    """
+    if pipe_handle is None:
+        return NOT_CONNECTED_MSG
+    if bp_id <= 0:
+        return f"BAD ID: {bp_id}"
+    try:
+        data = _send_command(f"BP_STATS:{bp_id:X}")
+    except RuntimeError as e:
+        return str(e)
+    parts = data.split(",")
+    if len(parts) != 3:
+        return f"bp_stats: unexpected response {data!r}"
+    try:
+        hits    = int(parts[0], 16)
+        dropped = int(parts[1], 16)
+        enabled = int(parts[2]) != 0
+    except ValueError:
+        return f"bp_stats: bad numbers {data!r}"
+    return (f"BP id={bp_id}: hits={hits} dropped={dropped} "
+            f"{'ENABLED' if enabled else 'disabled'}")
+
+
+# ---------------------------------------------------------------------------
+# Pattern scan (AOB) — find code by signature, survives ASLR + game updates
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def scan_pattern(module: str, pattern: str) -> str:
+    """Find the first byte sequence in a loaded module's memory.
+
+    Pattern syntax: hex bytes separated by spaces, '??' (or '?') for
+    wildcards. The bridge walks the module's image (PE SizeOfImage range)
+    starting from its loaded base and returns the first match VA.
+
+    Examples:
+        scan_pattern("FC26.exe", "48 89 5C 24 ?? 57 48 83 EC 20")
+        scan_pattern("FC26.exe", "48 8D 0D ?? ?? ?? ?? E8")
+
+    Args:
+        module: Module name (e.g. "FC26.exe", "ntdll.dll").
+        pattern: Space-separated hex bytes with '??' for wildcards.
+    """
+    if pipe_handle is None:
+        return NOT_CONNECTED_MSG
+    if not module or not pattern:
+        return "BAD ARGS"
+
+    # Args go through colon-separated parser; pattern uses spaces, no colons.
+    try:
+        data = _send_command(f"SCAN_PATTERN:{module}:{pattern}")
+    except RuntimeError as e:
+        return str(e)
+
+    try:
+        va = int(data, 16)
+    except ValueError:
+        return f"scan_pattern: unexpected response {data!r}"
+
+    return f"scan_pattern: 0x{va:016X}  ({module} + 0x{va:X})"
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
