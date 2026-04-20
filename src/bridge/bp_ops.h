@@ -341,6 +341,36 @@ namespace bridge_bp {
         return 0;
     }
 
+    // Variant: scan a raw VA range (no module resolution). Caller supplies
+    // base + size. Same wildcard semantics as patternScan. Returns first
+    // match VA or 0 if not found / unreadable.
+    inline unsigned long long patternScanAddr(unsigned long long base,
+                                              unsigned long long size,
+                                              const unsigned char* mask,
+                                              const unsigned char* pattern,
+                                              int patternLen)
+    {
+        if (base < 0x10000 || patternLen <= 0) return 0;
+        if (size <= (unsigned long long)patternLen) return 0;
+
+        const unsigned char* hay = (const unsigned char*)base;
+        const unsigned long long end = size - (unsigned long long)patternLen;
+
+        for (unsigned long long i = 0; i <= end; i++) {
+            __try {
+                bool match = true;
+                for (int j = 0; j < patternLen; j++) {
+                    if (mask[j] && hay[i + j] != pattern[j]) { match = false; break; }
+                }
+                if (match) return (unsigned long long)(hay + i);
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                i = (i + 0x1000) & ~0xFFFull;
+                if (i >= end) break;
+            }
+        }
+        return 0;
+    }
+
     // Parse "48 89 ?? 24 ?? 57" into pattern[] and mask[] (mask=1 byte must
     // match, mask=0 wildcard). Returns parsed length, or -1 on parse error.
     inline int parsePattern(const char* str, int strLen,

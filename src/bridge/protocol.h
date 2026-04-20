@@ -463,6 +463,30 @@ namespace bridge {
             return buildResponse(responseBuf, responseMax, true, outBuf);
         }
 
+        // MODULE_BASE:name   → returns base_hex,size_hex (PEB-walked)
+        if (strCmp(cmd->cmd, "MODULE_BASE") == 0) {
+            if (cmd->argCount < 1)
+                return buildResponse(responseBuf, responseMax, false, "BAD_ARGS");
+
+            void* base = peb::GetModuleBase(cmd->args[0]);
+            if (!base)
+                return buildResponse(responseBuf, responseMax, false, "NOT_LOADED");
+
+            // Pull SizeOfImage from the PE headers.
+            IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)base;
+            unsigned int imgSize = 0;
+            if (dos->e_magic == IMAGE_DOS_SIGNATURE) {
+                IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)((unsigned char*)base + dos->e_lfanew);
+                if (nt->Signature == IMAGE_NT_SIGNATURE)
+                    imgSize = nt->OptionalHeader.SizeOfImage;
+            }
+
+            char outBuf[64];
+            fmt::snprintf(outBuf, sizeof(outBuf), "%llX,%X",
+                          (unsigned long long)base, imgSize);
+            return buildResponse(responseBuf, responseMax, true, outBuf);
+        }
+
         // SCAN_PATTERN:moduleName:48 89 5C 24 ?? 57 48 83 EC
         // → returns first match VA, or 0 if not found / module not loaded.
         if (strCmp(cmd->cmd, "SCAN_PATTERN") == 0) {
@@ -483,6 +507,40 @@ namespace bridge {
             unsigned long long match = bridge_bp::patternScan(moduleName,
                                                               mask, pattern,
                                                               patLen);
+            if (match == 0)
+                return buildResponse(responseBuf, responseMax, false, "NOT_FOUND");
+
+            char outBuf[24];
+            fmt::snprintf(outBuf, sizeof(outBuf), "%llX", match);
+            return buildResponse(responseBuf, responseMax, true, outBuf);
+        }
+
+        // SCAN_PATTERN_ADDR:va:size:48 89 5C 24 ?? 57 48 83 EC
+        // Direct-address variant — no module resolution, caller supplies range.
+        if (strCmp(cmd->cmd, "SCAN_PATTERN_ADDR") == 0) {
+            if (cmd->argCount < 3)
+                return buildResponse(responseBuf, responseMax, false, "BAD_ARGS");
+
+            unsigned long long base = parseHex(cmd->args[0], strLen(cmd->args[0]));
+            unsigned long long size = parseHex(cmd->args[1], strLen(cmd->args[1]));
+            const char* patternStr  = cmd->args[2];
+            int patStrLen = strLen(patternStr);
+
+            if (base < 0x10000)
+                return buildResponse(responseBuf, responseMax, false, "BAD_ADDR");
+            if (size == 0 || size > 0x40000000ULL)  // 1 GiB sanity cap
+                return buildResponse(responseBuf, responseMax, false, "BAD_SIZE");
+
+            unsigned char pattern[128];
+            unsigned char mask[128];
+            int patLen = bridge_bp::parsePattern(patternStr, patStrLen,
+                                                 pattern, mask, 128);
+            if (patLen <= 0)
+                return buildResponse(responseBuf, responseMax, false, "BAD_PATTERN");
+
+            unsigned long long match = bridge_bp::patternScanAddr(base, size,
+                                                                  mask, pattern,
+                                                                  patLen);
             if (match == 0)
                 return buildResponse(responseBuf, responseMax, false, "NOT_FOUND");
 

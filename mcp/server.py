@@ -228,9 +228,17 @@ def _format_dump_struct(base_addr: int, raw: bytes) -> str:
     return "\n".join(lines)
 
 
-def _normalize_address(address: str) -> str:
-    """Strip 0x prefix and uppercase the address string."""
-    addr = address.strip()
+def _normalize_address(address) -> str:
+    """Normalize an address to a bare uppercase hex string.
+
+    Accepts either a string ("0x14282BB00" / "14282BB00") or a Python int
+    literal (0x14282BB00 == 5371722496). Claude Code can pass either form
+    from the tool call — most ergonomic for pasted addresses is the hex
+    int literal.
+    """
+    if isinstance(address, int):
+        return f"{address:X}"
+    addr = str(address).strip()
     if addr.lower().startswith("0x"):
         addr = addr[2:]
     return addr.upper()
@@ -352,7 +360,7 @@ def ping() -> str:
 
 
 @mcp.tool()
-def read_memory(address: str, size: int = 64) -> str:
+def read_memory(address: str | int, size: int = 64) -> str:
     """Read memory from the game process and return an annotated hex dump.
 
     Args:
@@ -381,7 +389,7 @@ def read_memory(address: str, size: int = 64) -> str:
 
 
 @mcp.tool()
-def write_memory(address: str, hex_bytes: str) -> str:
+def write_memory(address: str | int, hex_bytes: str) -> str:
     """Write bytes to a game memory address.
 
     Args:
@@ -517,7 +525,7 @@ def scan_reset() -> str:
 
 
 @mcp.tool()
-def dump_struct(address: str, size: int = 256) -> str:
+def dump_struct(address: str | int, size: int = 256) -> str:
     """Dump a structure with detailed per-qword annotations.
 
     Each 8-byte row shows: pointer check, float pair, int pair, and ASCII.
@@ -549,29 +557,40 @@ def dump_struct(address: str, size: int = 256) -> str:
 
 
 @mcp.tool()
-def get_module_base(module_name: str = "bf1.exe") -> str:
-    """Get the base address of the game module.
+def get_module_base(module_name: str = "FC26.exe") -> str:
+    """Get the runtime base + size of a loaded module in the game process.
 
-    Note: DLL doesn't support MODULES command. Returns known base addresses.
+    PEB-walked on the bridge side — handles ASLR correctly. Works for any
+    loaded module (game EXE, ntdll.dll, etc.).
 
     Args:
-        module_name: Module name (default 'bf1.exe')
+        module_name: Module filename (e.g. 'FC26.exe', 'bf1.exe', 'ntdll.dll').
     """
-    # Known bases from PEB walk in DLL init
-    known = {
-        "bf1.exe": 0x140000000,
-    }
-    base = known.get(module_name.lower())
-    if base:
-        return f"{module_name} base: 0x{base:X}"
-    return f"Unknown module: {module_name}. Known: {', '.join(known.keys())}"
+    if pipe_handle is None:
+        return NOT_CONNECTED_MSG
+    try:
+        data = _send_command(f"MODULE_BASE:{module_name}")
+    except RuntimeError as e:
+        return str(e)
+
+    parts = data.split(",")
+    if len(parts) < 2:
+        return f"get_module_base: unexpected response {data!r}"
+    try:
+        base = int(parts[0], 16)
+        size = int(parts[1], 16)
+    except ValueError:
+        return f"get_module_base: bad numbers {data!r}"
+
+    return (f"{module_name}: base=0x{base:016X} size=0x{size:X} "
+            f"range=[0x{base:X} .. 0x{base + size:X})")
 
 
 # ---------------------------------------------------------------------------
 # Convenience readers / writers
 # ---------------------------------------------------------------------------
 
-def _read_raw(address: str, size: int) -> bytes:
+def _read_raw(address: str | int, size: int) -> bytes:
     """Read raw bytes from game memory. Raises on failure."""
     addr = _normalize_address(address)
     data = _send_command(f"READ:{addr}:{size:X}")
@@ -579,7 +598,7 @@ def _read_raw(address: str, size: int) -> bytes:
 
 
 @mcp.tool()
-def read_float(address: str) -> str:
+def read_float(address: str | int) -> str:
     """Read a single 32-bit float from memory.
 
     Args:
@@ -596,7 +615,7 @@ def read_float(address: str) -> str:
 
 
 @mcp.tool()
-def read_int(address: str, signed: bool = True) -> str:
+def read_int(address: str | int, signed: bool = True) -> str:
     """Read a 32-bit integer from memory.
 
     Args:
@@ -615,7 +634,7 @@ def read_int(address: str, signed: bool = True) -> str:
 
 
 @mcp.tool()
-def read_qword(address: str) -> str:
+def read_qword(address: str | int) -> str:
     """Read a 64-bit value (pointer / uint64) from memory.
 
     Args:
@@ -633,7 +652,7 @@ def read_qword(address: str) -> str:
 
 
 @mcp.tool()
-def read_vec3(address: str) -> str:
+def read_vec3(address: str | int) -> str:
     """Read a Vec3 (3 floats: x, y, z) from memory.
 
     Args:
@@ -650,7 +669,7 @@ def read_vec3(address: str) -> str:
 
 
 @mcp.tool()
-def read_vec4(address: str) -> str:
+def read_vec4(address: str | int) -> str:
     """Read a Vec4 (4 floats: x, y, z, w) from memory.
 
     Args:
@@ -667,7 +686,7 @@ def read_vec4(address: str) -> str:
 
 
 @mcp.tool()
-def read_pointer_chain(base: str, offsets: list[int]) -> str:
+def read_pointer_chain(base: str | int, offsets: list[int]) -> str:
     """Follow a multi-level pointer chain and return every step.
 
     Reads [base] then follows each offset: [[base]+off0]+off1]+...
@@ -706,7 +725,7 @@ def read_pointer_chain(base: str, offsets: list[int]) -> str:
 
 
 @mcp.tool()
-def write_float(address: str, value: float) -> str:
+def write_float(address: str | int, value: float) -> str:
     """Write a 32-bit float to memory.
 
     Args:
@@ -725,7 +744,7 @@ def write_float(address: str, value: float) -> str:
 
 
 @mcp.tool()
-def write_int(address: str, value: int) -> str:
+def write_int(address: str | int, value: int) -> str:
     """Write a 32-bit integer to memory.
 
     Args:
@@ -744,17 +763,17 @@ def write_int(address: str, value: int) -> str:
 
 
 @mcp.tool()
-def write_qword(address: str, value: str) -> str:
+def write_qword(address: str | int, value: str | int) -> str:
     """Write a 64-bit value to memory.
 
     Args:
-        address: Hex address
-        value: Hex value to write (e.g., '0x141370CB0')
+        address: Address (hex string like '0x141370CB0' or plain int).
+        value: Value to write (hex string or plain int).
     """
     if pipe_handle is None:
         return NOT_CONNECTED_MSG
     try:
-        ival = int(_normalize_address(value), 16)
+        ival = value if isinstance(value, int) else int(_normalize_address(value), 16)
         hb = struct.pack("<Q", ival).hex().upper()
         addr = _normalize_address(address)
         _send_command(f"WRITE:{addr}:{hb}")
@@ -764,7 +783,7 @@ def write_qword(address: str, value: str) -> str:
 
 
 @mcp.tool()
-def write_nop(address: str, count: int = 1) -> str:
+def write_nop(address: str | int, count: int = 1) -> str:
     """Write NOP (0x90) bytes to memory. Useful for patching instructions.
 
     Args:
@@ -787,7 +806,7 @@ def write_nop(address: str, count: int = 1) -> str:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def scan_int_value(value: int, struct_address: str = "", struct_size: int = 0x5000) -> str:
+def scan_int_value(value: int, struct_address: str | int = "", struct_size: int = 0x5000) -> str:
     """Search for a 32-bit integer value inside a struct's memory range.
 
     Uses READ + Python-side comparison (DLL only supports F32 scan natively).
@@ -829,7 +848,7 @@ def scan_int_value(value: int, struct_address: str = "", struct_size: int = 0x50
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def watch_address(address: str, data_type: str = "float", count: int = 10, interval_ms: int = 200) -> str:
+def watch_address(address: str | int, data_type: str = "float", count: int = 10, interval_ms: int = 200) -> str:
     """Read an address repeatedly to observe changes over time.
 
     Useful for finding values that change during gameplay (recoil, spread, velocity).
@@ -871,7 +890,7 @@ def watch_address(address: str, data_type: str = "float", count: int = 10, inter
 
 
 @mcp.tool()
-def compare_snapshots(addresses: list[str], data_type: str = "float", delay_ms: int = 2000) -> str:
+def compare_snapshots(addresses: list[str | int], data_type: str = "float", delay_ms: int = 2000) -> str:
     """Take two snapshots of multiple addresses with a delay between them.
 
     Shows which values changed — useful for finding recoil/spread/velocity during firing.
@@ -935,7 +954,7 @@ def compare_snapshots(addresses: list[str], data_type: str = "float", delay_ms: 
 
 
 @mcp.tool()
-def scan_struct_for_value(base_address: str, value: float, struct_size: int = 0x5000, tolerance: float = 0.05) -> str:
+def scan_struct_for_value(base_address: str | int, value: float, struct_size: int = 0x5000, tolerance: float = 0.05) -> str:
     """Scan a struct's memory range for a specific float value.
 
     Useful for finding where a known value (yaw, health, speed) is stored inside an object.
@@ -972,7 +991,7 @@ def scan_struct_for_value(base_address: str, value: float, struct_size: int = 0x
 
 
 @mcp.tool()
-def scan_struct_for_pointer(base_address: str, struct_size: int = 0x200) -> str:
+def scan_struct_for_pointer(base_address: str | int, struct_size: int = 0x200) -> str:
     """List all valid-looking pointers inside a struct.
 
     Reads qwords and checks if they look like valid heap/module pointers.
@@ -1056,7 +1075,7 @@ def _decode_event(hex_blob: str) -> dict:
 
 
 @mcp.tool()
-def watch_install(address: str, access: str = "rw", length: int = 1,
+def watch_install(address: str | int, access: str = "rw", length: int = 1,
                   filter_tracker: bool = True, count_only: bool = False) -> str:
     """Install a hypervisor watchpoint on a guest virtual address.
 
@@ -1259,7 +1278,7 @@ def _decode_bp_event(hex_blob: str) -> dict:
 
 
 @mcp.tool()
-def bp_install(target: str, module: str = "", count_only: bool = False) -> str:
+def bp_install(target: str | int, module: str = "", count_only: bool = False) -> str:
     """Install an execute breakpoint via EPT hook in the bridge DLL.
 
     Two ways to specify the address:
@@ -1439,29 +1458,48 @@ def bp_stats(bp_id: int) -> str:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def scan_pattern(module: str, pattern: str) -> str:
-    """Find the first byte sequence in a loaded module's memory.
+def scan_pattern(pattern: str, module: str = "", address: str | int = "", size: int = 0) -> str:
+    """Find the first byte sequence in the game's memory.
+
+    Two targeting modes (pick one):
+      - Module mode: set `module` to a loaded-module name. Bridge walks the
+        module's PE SizeOfImage range. Survives ASLR.
+      - Direct-address mode: set `address` (hex VA) and `size` (bytes). Bridge
+        scans exactly that range. Use when you already know where to look
+        (a struct, a heap block, a specific section).
 
     Pattern syntax: hex bytes separated by spaces, '??' (or '?') for
-    wildcards. The bridge walks the module's image (PE SizeOfImage range)
-    starting from its loaded base and returns the first match VA.
+    wildcards.
 
     Examples:
-        scan_pattern("FC26.exe", "48 89 5C 24 ?? 57 48 83 EC 20")
-        scan_pattern("FC26.exe", "48 8D 0D ?? ?? ?? ?? E8")
+        scan_pattern("48 89 5C 24 ?? 57 48 83 EC 20", module="FC26.exe")
+        scan_pattern("48 8D 0D ?? ?? ?? ?? E8", address="0x14000000", size=0x1000000)
 
     Args:
-        module: Module name (e.g. "FC26.exe", "ntdll.dll").
-        pattern: Space-separated hex bytes with '??' for wildcards.
+        pattern: Space-separated hex bytes with '??' wildcards.
+        module: Module name (e.g. "FC26.exe"). Mutually exclusive with address.
+        address: Hex VA of scan start. Requires size.
+        size: Bytes to scan from address. Capped at 1 GiB.
     """
     if pipe_handle is None:
         return NOT_CONNECTED_MSG
-    if not module or not pattern:
-        return "BAD ARGS"
+    if not pattern:
+        return "BAD ARGS: pattern is required"
 
-    # Args go through colon-separated parser; pattern uses spaces, no colons.
+    if address != "" and address != 0:
+        if size <= 0:
+            return "BAD ARGS: size is required when using address mode"
+        addr_hex = _normalize_address(address)
+        cmd = f"SCAN_PATTERN_ADDR:{addr_hex}:{size:X}:{pattern}"
+        label = f"[0x{addr_hex} .. +0x{size:X})"
+    elif module:
+        cmd = f"SCAN_PATTERN:{module}:{pattern}"
+        label = module
+    else:
+        return "BAD ARGS: provide either module or (address + size)"
+
     try:
-        data = _send_command(f"SCAN_PATTERN:{module}:{pattern}")
+        data = _send_command(cmd)
     except RuntimeError as e:
         return str(e)
 
@@ -1470,7 +1508,7 @@ def scan_pattern(module: str, pattern: str) -> str:
     except ValueError:
         return f"scan_pattern: unexpected response {data!r}"
 
-    return f"scan_pattern: 0x{va:016X}  ({module} + 0x{va:X})"
+    return f"scan_pattern: 0x{va:016X}  ({label})"
 
 
 # ---------------------------------------------------------------------------
