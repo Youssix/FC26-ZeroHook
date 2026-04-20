@@ -5,7 +5,7 @@
 #include "../features/sliders.h"
 #include "../features/ai_difficulty.h"
 #include "../features/ai_control.h"
-#include "../features/ai_trace.h"
+#include "../features/settings.h"
 #include "../features/proclub.h"
 #include "../menu/toast.h"
 #include "../log/log.h"
@@ -81,12 +81,12 @@ namespace
         unsigned long long orig_rax = ((ept::register_context_t*)ctx)->rax;
 
         // ── Opcode census — runtime-gated by Settings > Trace Opcodes ─
-        // Toggled live from the menu (ai_trace::g_traceOpcodes). When false,
+        // Toggled live from the menu (settings::g_traceOpcodes). When false,
         // zero log I/O — the entire block is skipped without recompiling.
         // Filters out the 4 per-tick framing opcodes (~94% of traffic):
         //   0x5D4D4E4C  ball/score  0x38789943  timer sync
         //   0x90F87271  physics     0x8CD19B0C  heartbeat
-        if (ai_trace::g_traceOpcodes)
+        if (settings::g_traceOpcodes)
         {
             unsigned int op_noise = *a2;
             bool is_noise =

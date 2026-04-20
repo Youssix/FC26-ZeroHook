@@ -138,7 +138,7 @@
     <ClCompile Include="src\features\ai_difficulty.cpp" />
     <ClCompile Include="src\features\proclub.cpp" />
     <ClCompile Include="src\features\ai_control.cpp" />
-    <ClCompile Include="src\features\ai_trace.cpp" />
+    <ClCompile Include="src\features\settings.cpp" />
   </ItemGroup>
   <!-- ====== Header Files ====== -->
   <ItemGroup>
@@ -154,7 +154,7 @@
     <ClInclude Include="src\features\ai_difficulty.h" />
     <ClInclude Include="src\features\proclub.h" />
     <ClInclude Include="src\features\ai_control.h" />
-    <ClInclude Include="src\features\ai_trace.h" />
+    <ClInclude Include="src\features\settings.h" />
     <ClInclude Include="src\features\sliders.h" />
     <ClInclude Include="src\game\game.h" />
     <ClInclude Include="src\hook\dxgi_hooks.h" />

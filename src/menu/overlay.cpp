@@ -16,7 +16,7 @@
 #include "../features/ai_difficulty.h"
 #include "../features/proclub.h"
 #include "../features/ai_control.h"
-#include "../features/ai_trace.h"
+#include "../features/settings.h"
 #include "../log/fmt.h"
 #include "../log/log.h"
 #include "../renderer/renderer.h"
@@ -1123,8 +1123,9 @@ void overlay::Frame(float screenW, float screenH)
             if (CustomMenu::g_menu.BeginSection("Debug Logging"))
             {
                 CustomMenu::g_menu.Toggle("Trace Opcodes",
-                    (bool*)&ai_trace::g_traceOpcodes,
+                    (bool*)&settings::g_traceOpcodes,
                     "Log every inbound RouteGameMessage opcode (minus 4 framing opcodes) to zerohook.log. Toggle live — no restart. OFF by default.");
+
                 CustomMenu::g_menu.Toggle("Deep Hook AI Takeover",
                     (bool*)&ai_control::g_deepHookAiTakeover,
                     "Hook-based approach: intercept AFK_DECISION_BRAIN calls, set matchCtx[0x2554]=1 for our slots, let the brain naturally take its fast path. Toggle live.");
