@@ -648,6 +648,96 @@ bool ai_control::FireA2CBTeamOpp()
     return SendA2CB(side ^ 1u, slot, "A2CB opp {oppSide,cap,0}");
 }
 
+bool ai_control::ClaimMySlot()
+{
+    if (!offsets::FnClaimSlot) {
+        toast::Show(toast::Type::Error, "ClaimMySlot: FnClaimSlot not resolved");
+        return false;
+    }
+    if (!g_playerIdCaptured) {
+        toast::Show(toast::Type::Error, "ClaimMySlot: ourPlayerId not captured");
+        return false;
+    }
+
+    uintptr_t ctx = GetMatchCtx();
+    if (!ctx) {
+        toast::Show(toast::Type::Error, "ClaimMySlot: no match context");
+        return false;
+    }
+
+    // The claim primitive's a2 layout is {teamId, playerId} — slot row
+    // at ctx+0x10+0x1A0*k has team at +0x10, player at +0x14; the function
+    // scans by (a2[0] == slot[+0x10], a2[1] == slot[+0x14]).
+    uint32_t team_player[2] = {
+        static_cast<uint32_t>(sliders::playerside),
+        static_cast<uint32_t>(g_ourPlayerId)
+    };
+
+    typedef void (__fastcall* claim_fn_t)(uintptr_t, uint32_t*);
+    auto fn = reinterpret_cast<claim_fn_t>(offsets::FnClaimSlot);
+
+    hook::g_allow_attack_send = true;
+    bool ok = false;
+    __try {
+        fn(ctx, team_player);
+        ok = true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        ok = false;
+    }
+    hook::g_allow_attack_send = false;
+
+    char b[192];
+    fmt::snprintf(b, sizeof(b),
+        "[AI] ClaimMySlot: sub_14281B970(ctx=%p, {team=%u, player=%u}) ok=%d\r\n",
+        (void*)ctx, team_player[0], team_player[1], ok ? 1 : 0);
+    log::debug(b);
+
+    if (ok) toast::Show(toast::Type::Success, "ClaimMySlot fired");
+    else    toast::Show(toast::Type::Error, "ClaimMySlot threw");
+    return ok;
+}
+
+bool ai_control::CallFnAfkTakeover()
+{
+    if (!offsets::FnAfkTakeover) {
+        toast::Show(toast::Type::Error, "FnAfkTakeover: offset not resolved");
+        return false;
+    }
+
+    uintptr_t ctx; uint32_t slot; uint32_t side;
+    if (!ResolveCtxSlotSide(ctx, slot, side)) {
+        toast::Show(toast::Type::Error, "FnAfkTakeover: ctx/slot not ready");
+        return false;
+    }
+
+    // Signature: void __fastcall FnAfkTakeover(matchCtx, slot, a3_warning, a4_enable)
+    // a3=0 → not a pre-warning tick (do the full takeover path).
+    // a4=1 → the v36 controller-active flag: required for the 0xA2CB726E
+    //        send path inside (see decompile at 0x1427F7683).
+    typedef void (__fastcall* afk_fn_t)(uintptr_t, int, char, char);
+    afk_fn_t fn = reinterpret_cast<afk_fn_t>(offsets::FnAfkTakeover);
+
+    hook::g_allow_attack_send = true;
+    bool ok = false;
+    __try {
+        fn(ctx, static_cast<int>(slot), 0, 1);
+        ok = true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        ok = false;
+    }
+    hook::g_allow_attack_send = false;
+
+    char b[160];
+    fmt::snprintf(b, sizeof(b),
+        "[AI] CallFnAfkTakeover(matchCtx=%p, slot=%u, 0, 1) ok=%d\r\n",
+        (void*)ctx, slot, ok ? 1 : 0);
+    log::debug(b);
+
+    if (ok) toast::Show(toast::Type::Success, "FnAfkTakeover called");
+    else    toast::Show(toast::Type::Error, "FnAfkTakeover threw");
+    return ok;
+}
+
 bool ai_control::FireA2CBFullSweep()
 {
     uintptr_t rcx = 0;

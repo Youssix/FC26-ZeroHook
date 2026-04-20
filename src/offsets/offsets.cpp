@@ -34,6 +34,7 @@ void*         offsets::FnAfkTakeover      = nullptr;  // sub_1427F7640
 void*         offsets::FnAiTakeoverDispatch = nullptr; // sub_142812730
 void*         offsets::FnAiTakeoverEnabler  = nullptr; // sub_1427FD810
 void*         offsets::FnTakeOverSlot       = nullptr; // sub_142814760
+void*         offsets::FnClaimSlot          = nullptr; // sub_14281B970
 uintptr_t     offsets::StateRootPtrAddr   = 0;        // &qword_14D895190
 uintptr_t     offsets::EAIDVTable        = 0;
 void*         offsets::FnEAID            = nullptr;
@@ -352,6 +353,22 @@ bool offsets::Init()
     fmt::snprintf(buf, sizeof(buf),
         "[offsets] [12d] %s FnTakeOverSlot: %p\r\n",
         FnTakeOverSlot ? "OK" : "FAIL", FnTakeOverSlot);
+    log::debug(buf);
+
+    // ── 12e. Low-level CLAIM primitive (sub_14281B970) ──────────────
+    //   Signature: void __fastcall(matchData*, uint32_t team_player[2]).
+    //   Prologue: mov r11, rsp; push rbp; push rbx; push rdi; push r13;
+    //             push r15; lea rbp,[r11-0x5F]; sub rsp, 0xB0;
+    //             mov rax, cs:__security_cookie
+    //   The r11-base + 0xB0 stack frame + 5-register push sequence is
+    //   a unique signature among the slot-handler family (B970/BEE0/AA60
+    //   all differ at this offset). Byte 17 onward (0xB0 00 00 00) is
+    //   the stack-frame size — stable across minor updates.
+    FnClaimSlot = game::pattern_scan(GameBase, GameSize,
+        "4C 8B DC 55 53 57 41 55 41 57 49 8D 6B A1 48 81 EC B0 00 00 00 48 8B 05");
+    fmt::snprintf(buf, sizeof(buf),
+        "[offsets] [12e] %s FnClaimSlot: %p\r\n",
+        FnClaimSlot ? "OK" : "FAIL", FnClaimSlot);
     log::debug(buf);
 
     // ── 13. State-root pointer global (qword_14D895190) ────────────

@@ -1189,6 +1189,30 @@ void overlay::Frame(float screenW, float screenH)
                     __try { ai_control::FireA2CBFullSweep(); }
                     __except (EXCEPTION_EXECUTE_HANDLER) {}
                 }
+
+                // The cleanest natural-path test: call the game's own
+                // FnAfkTakeover directly with (matchCtx, captain, 0, 1).
+                // It fires all three takeover packets in the correct order,
+                // with whatever internal state the function itself produces
+                // — matching what happens when the AFK brain fires naturally.
+                if (CustomMenu::g_menu.ButtonColored(
+                        "Call FnAfkTakeover(ctx, cap, 0, 1)",
+                        CustomMenu::Colors::Primary, -1, 28))
+                {
+                    __try { ai_control::CallFnAfkTakeover(); }
+                    __except (EXCEPTION_EXECUTE_HANDLER) {}
+                }
+
+                // THE RECIPE — sub_14281B970 direct call with our own
+                // {team, player}. Peer accepts because owner match passes,
+                // no AI-driver enable needed (peer runs its own AI).
+                if (CustomMenu::g_menu.ButtonColored(
+                        "Claim My Slot (sub_14281B970)",
+                        CustomMenu::Colors::Success, -1, 32))
+                {
+                    __try { ai_control::ClaimMySlot(); }
+                    __except (EXCEPTION_EXECUTE_HANDLER) {}
+                }
                 CustomMenu::g_menu.EndSection();
             }
         }

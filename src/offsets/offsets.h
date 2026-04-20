@@ -91,6 +91,18 @@ namespace offsets
     // Companion Release: sub_142829430 (same sig, flips flags back to 0).
     extern void* FnTakeOverSlot;  // sub_142814760
 
+    // sub_14281B970 — low-level CLAIM primitive for a single slot.
+    // Signature: void __fastcall(matchData*, uint32_t team_player[2])
+    // where team_player[0] = teamId (0 or 1), team_player[1] = playerId.
+    // Finds the slot whose (team, player) matches, writes slot-level flags,
+    // broadcasts 0xA2CB726E {0xFFFFFFFF, slotIdx, 0}, calls sub_14282B1D0
+    // for the HLI state-sync, and cascades a per-team ACK. This is the
+    // canonical per-slot claim — peer-side validator sub_142825AC0 accepts
+    // it because sub_142803460(matchCtx) == payload[0] (owner match). No
+    // AI-driver enable required — peer simulates our AI locally once the
+    // claim lands, same as CPU-vs-CPU mode.
+    extern void* FnClaimSlot;  // sub_14281B970
+
     // Address of qword_14D895190 (global state-root pointer). Resolved
     // from the first instruction of sub_142805590 (mov rax, cs:...).
     // Used to override mode at +0x1A0 during AFK takeover call so the

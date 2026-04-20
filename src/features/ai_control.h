@@ -109,4 +109,29 @@ namespace ai_control
     // 22-packet burst: {0xFFFFFFFF, k, 0} for k in 0..21.
     // Re-exposes the dormant BroadcastFullAiSweep path under the menu.
     bool FireA2CBFullSweep();
+
+    // Direct call to the game's own FnAfkTakeover (sub_1427F7640) with
+    // (matchCtx, captainSlot, 0, 1). Internally fires the three-packet
+    // sequence (0xA53EAAB2 announce → sub_14282B1D0's 0x4E9507C9 state-sync
+    // → 0xA2CB726E reassign) in the exact order the game does when it
+    // triggers natural AFK takeover. If this still DataMismatches, the
+    // issue isn't the packet sequence — it's something else about our
+    // context that the peer validates (timing, mid-match vs match-setup,
+    // prior state).
+    bool CallFnAfkTakeover();
+
+    // THE RECIPE — direct call to sub_14281B970 (FnClaimSlot) with our own
+    // {teamId=mySide, playerId=g_ourPlayerId}. This is the low-level claim
+    // primitive:
+    //   - finds our slot by (team, player)
+    //   - writes slot+0x190=1, matchCtx+0x2557=1
+    //   - broadcasts 0xA2CB726E {0xFFFFFFFF, slotIdx, 0}
+    //   - calls sub_14282B1D0 for HLI state sync
+    //   - cascades per-team ACK
+    // Peer's validator sub_142825AC0 accepts because sub_142803460 ==
+    // payload[0] (owner match). No AI-driver enable needed — peer
+    // simulates our AI locally once the claim lands.
+    // Requires g_playerIdCaptured to be true (bridge captures from
+    // incoming 0xA2CB726E traffic at match start).
+    bool ClaimMySlot();
 }
