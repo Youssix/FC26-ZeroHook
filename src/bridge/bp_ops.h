@@ -127,12 +127,10 @@ namespace bridge_bp {
         #undef IBPW_8
         #undef IBPW
 
-        char buf[128];
-        fmt::snprintf(buf, sizeof(buf),
+        log::debugf(
             "[BP] wrappers init: [0]=%p [1]=%p [63]=%p (DLL-base-correct)\r\n",
             (void*)g_bp_wrappers[0], (void*)g_bp_wrappers[1],
             (void*)g_bp_wrappers[63]);
-        log::to_file(buf);
     }
 
     // Common logger — runs on the guest stack inside the EPT hook detour.
@@ -150,14 +148,10 @@ namespace bridge_bp {
         // Crash-survivable trace: if a subsequent access faults, the last
         // emitted [BP] line in zerohook.log tells us which BP fired last.
         // Written BEFORE any ring/stack work so a fault in those is visible.
-        {
-            char lb[96];
-            fmt::snprintf(lb, sizeof(lb),
-                "[BP] hit id=%d target=%p rcx=%p rdx=%p rsp=%p\r\n",
-                bp_id, (void*)slot.target_va, (void*)ctx->rcx,
-                (void*)ctx->rdx, (void*)ctx->original_rsp);
-            log::to_file(lb);
-        }
+        log::debugf(
+            "[BP] hit id=%d target=%p rcx=%p rdx=%p rsp=%p\r\n",
+            bp_id, (void*)slot.target_va, (void*)ctx->rcx,
+            (void*)ctx->rdx, (void*)ctx->original_rsp);
 
         _InterlockedIncrement64(&slot.hits);
 
@@ -212,11 +206,9 @@ namespace bridge_bp {
         init_wrappers_once();
 
         if (target_va < 0x10000) {
-            char ib[96];
-            fmt::snprintf(ib, sizeof(ib),
+            log::debugf(
                 "[BP] install REJECT: target_va=%p < 0x10000\r\n",
                 (void*)target_va);
-            log::to_file(ib);
             return -1;
         }
 
@@ -226,13 +218,9 @@ namespace bridge_bp {
             return -1;
         }
 
-        {
-            char ib[96];
-            fmt::snprintf(ib, sizeof(ib),
-                "[BP] install REQ slot=%d target=%p count_only=%d\r\n",
-                slot, (void*)target_va, count_only ? 1 : 0);
-            log::to_file(ib);
-        }
+        log::debugf(
+            "[BP] install REQ slot=%d target=%p count_only=%d\r\n",
+            slot, (void*)target_va, count_only ? 1 : 0);
 
         // Zero the params — install_hook fills it in from the relocator.
         bridge::memZero(&g_bp_params[slot].params, sizeof(ept::ept_hook_install_params_t));
@@ -266,11 +254,9 @@ namespace bridge_bp {
                                     (void*)g_bp_wrappers[slot],
                                     nameBuf);
         if (!ok) {
-            char ib[96];
-            fmt::snprintf(ib, sizeof(ib),
+            log::debugf(
                 "[BP] install FAIL slot=%d target=%p\r\n",
                 slot, (void*)target_va);
-            log::to_file(ib);
             g_bp_slots[slot].installed = false;
             g_bp_slots[slot].target_va = 0;
             return -1;
@@ -280,13 +266,9 @@ namespace bridge_bp {
         _ReadWriteBarrier();
         _InterlockedExchange(&g_bp_slots[slot].enabled, 1);
 
-        {
-            char ib[96];
-            fmt::snprintf(ib, sizeof(ib),
-                "[BP] install OK slot=%d target=%p wrapper=%p ENABLED\r\n",
-                slot, (void*)target_va, (void*)g_bp_wrappers[slot]);
-            log::to_file(ib);
-        }
+        log::debugf(
+            "[BP] install OK slot=%d target=%p wrapper=%p ENABLED\r\n",
+            slot, (void*)target_va, (void*)g_bp_wrappers[slot]);
 
         return slot;
     }

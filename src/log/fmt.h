@@ -49,12 +49,9 @@ namespace fmt
         }
     }
 
-    // Minimal snprintf: %s %p %u %d %x %X %lu %lX %llu %llX %02X %016llX %%
-    inline int snprintf(char* buf, int max, const char* format, ...)
+    // Minimal vsnprintf: %s %p %u %d %x %X %lu %lX %llu %llX %02X %016llX %%
+    inline int vsnprintf(char* buf, int max, const char* format, va_list args)
     {
-        va_list args;
-        va_start(args, format);
-
         int pos = 0;
         const char* p = format;
 
@@ -121,7 +118,15 @@ namespace fmt
 
     done:
         if (max > 0) buf[pos < max ? pos : max - 1] = '\0';
-        va_end(args);
         return pos;
+    }
+
+    inline int snprintf(char* buf, int max, const char* format, ...)
+    {
+        va_list args;
+        va_start(args, format);
+        int result = vsnprintf(buf, max, format, args);
+        va_end(args);
+        return result;
     }
 }

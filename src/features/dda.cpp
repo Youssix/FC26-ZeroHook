@@ -63,7 +63,6 @@ namespace
 
 bool dda::Init(void* gameBase, unsigned long gameSize)
 {
-    char buf[256];
     initialized = false;
 
     if (!gameBase || !gameSize) {
@@ -89,8 +88,7 @@ bool dda::Init(void* gameBase, unsigned long gameSize)
     }
 
     uintptr_t wrapperAddr = (uintptr_t)match;
-    fmt::snprintf(buf, sizeof(buf), "[DDA] Wrapper function: %p\r\n", (void*)wrapperAddr);
-    log::to_file(buf);
+    log::debugf("[DDA] Wrapper function: %p\r\n", (void*)wrapperAddr);
 
     // 2. Decode: bytes[3..9] = 48 8B 0D [disp32] → resolve RIP-relative to get global addr
     //    Instruction at wrapperAddr+3: 48 8B 0D XX XX XX XX (7 bytes)
@@ -98,15 +96,13 @@ bool dda::Init(void* gameBase, unsigned long gameSize)
     int globalDisp = *(int*)(wrapperAddr + 6);
     uintptr_t globalAddr = wrapperAddr + 10 + globalDisp;
 
-    fmt::snprintf(buf, sizeof(buf), "[DDA] Settings adapter global: %p\r\n", (void*)globalAddr);
-    log::to_file(buf);
+    log::debugf("[DDA] Settings adapter global: %p\r\n", (void*)globalAddr);
 
     // 3. Extract vtable offset from FF 90 XX XX XX XX at wrapperAddr+13
     //    bytes[14..17] contain the dword vtable offset
     unsigned int vtableOffset = *(unsigned int*)(wrapperAddr + 15);
 
-    fmt::snprintf(buf, sizeof(buf), "[DDA] Vtable offset: 0x%X\r\n", vtableOffset);
-    log::to_file(buf);
+    log::debugf("[DDA] Vtable offset: 0x%X\r\n", vtableOffset);
 
     // 4. Read the adapter global → deref to object → deref to vtable → entry at offset
     uintptr_t adapterObj = 0;
@@ -115,8 +111,7 @@ bool dda::Init(void* gameBase, unsigned long gameSize)
         return false;
     }
 
-    fmt::snprintf(buf, sizeof(buf), "[DDA] Adapter object: %p\r\n", (void*)adapterObj);
-    log::to_file(buf);
+    log::debugf("[DDA] Adapter object: %p\r\n", (void*)adapterObj);
 
     uintptr_t vtablePtr = 0;
     if (!SafeReadPtr(adapterObj, &vtablePtr) || !vtablePtr) {
@@ -124,8 +119,7 @@ bool dda::Init(void* gameBase, unsigned long gameSize)
         return false;
     }
 
-    fmt::snprintf(buf, sizeof(buf), "[DDA] Vtable: %p\r\n", (void*)vtablePtr);
-    log::to_file(buf);
+    log::debugf("[DDA] Vtable: %p\r\n", (void*)vtablePtr);
 
     // The vtable slot address
     g_vtableSlotAddr = vtablePtr + vtableOffset;
@@ -139,9 +133,8 @@ bool dda::Init(void* gameBase, unsigned long gameSize)
 
     g_originalValue = origFn;
 
-    fmt::snprintf(buf, sizeof(buf), "[DDA] Vtable slot: %p -> original fn: %p\r\n",
+    log::debugf("[DDA] Vtable slot: %p -> original fn: %p\r\n",
         (void*)g_vtableSlotAddr, (void*)(uintptr_t)origFn);
-    log::to_file(buf);
 
     // 5. Find xor eax,eax; ret gadget
     g_gadgetAddr = FindRetZeroGadget(gameBase, gameSize);
@@ -150,8 +143,7 @@ bool dda::Init(void* gameBase, unsigned long gameSize)
         return false;
     }
 
-    fmt::snprintf(buf, sizeof(buf), "[DDA] Gadget (ret 0): %p\r\n", (void*)g_gadgetAddr);
-    log::to_file(buf);
+    log::debugf("[DDA] Gadget (ret 0): %p\r\n", (void*)g_gadgetAddr);
 
     initialized = true;
     g_swapped = false;
@@ -167,8 +159,6 @@ bool dda::IsReady()
 void dda::SetEnabled(bool enable)
 {
     if (!initialized) return;
-
-    char buf[256];
 
     if (enable && !g_swapped)
     {
@@ -186,8 +176,7 @@ void dda::SetEnabled(bool enable)
             toast::Show(toast::Type::Success, "DDA bypass enabled");
             log::to_file("[DDA] Enabled: vtable swapped to gadget\r\n");
         } else {
-            fmt::snprintf(buf, sizeof(buf), "[DDA] ERROR: write failed (status=%u)\r\n", req.status);
-            log::to_file(buf);
+            log::debugf("[DDA] ERROR: write failed (status=%u)\r\n", req.status);
             bypassEnabled = false;
             toast::Show(toast::Type::Error, "DDA bypass failed");
         }
@@ -208,8 +197,7 @@ void dda::SetEnabled(bool enable)
             toast::Show(toast::Type::Info, "DDA bypass disabled");
             log::to_file("[DDA] Disabled: vtable restored\r\n");
         } else {
-            fmt::snprintf(buf, sizeof(buf), "[DDA] ERROR: restore failed (status=%u)\r\n", req.status);
-            log::to_file(buf);
+            log::debugf("[DDA] ERROR: restore failed (status=%u)\r\n", req.status);
             bypassEnabled = true;
             toast::Show(toast::Type::Error, "DDA restore failed");
         }

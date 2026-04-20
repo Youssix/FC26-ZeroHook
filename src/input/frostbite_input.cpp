@@ -35,10 +35,8 @@ bool FrostbiteInput::Init()
     s_fnGetMouseDeltaY   = (fn_int_t)offsets::FnGetMouseDeltaY;
     s_fnGetMouseScroll   = (fn_int_t)offsets::FnGetMouseScroll;
 
-    char buf[256];
-    fmt::snprintf(buf, sizeof(buf), "[FBInput] reader=%p  isMouseDown=%p\r\n",
+    log::debugf("[FBInput] reader=%p  isMouseDown=%p\r\n",
         (void*)s_reader, (void*)s_fnIsMouseDown);
-    log::debug(buf);
 
     s_ready = true;
     log::debug("[FBInput] Init OK (EPT hooks handle input blocking)\r\n");

@@ -188,10 +188,8 @@ namespace
         }
 
         int entryCount = (int)((mapEnd - mapStart) / 0x20);
-        char buf[256];
-        fmt::snprintf(buf, sizeof(buf), "[SERVER] ModifyLatencyMap: %d entries, target=%s\r\n",
+        log::debugf("[SERVER] ModifyLatencyMap: %d entries, target=%s\r\n",
             entryCount, targetAlias);
-        log::debug(buf);
 
         bool foundTarget = false;
 
@@ -229,11 +227,9 @@ namespace
         }
 
         if (foundTarget) {
-            fmt::snprintf(buf, sizeof(buf), "[SERVER] Latency map modified: %s=5, others=999\r\n", targetAlias);
-            log::debug(buf);
+            log::debugf("[SERVER] Latency map modified: %s=5, others=999\r\n", targetAlias);
         } else {
-            fmt::snprintf(buf, sizeof(buf), "[SERVER] WARNING: target '%s' not found in latency map\r\n", targetAlias);
-            log::debug(buf);
+            log::debugf("[SERVER] WARNING: target '%s' not found in latency map\r\n", targetAlias);
         }
     }
 
@@ -360,9 +356,7 @@ namespace
             cursor = next;
         }
 
-        char buf[128];
-        fmt::snprintf(buf, sizeof(buf), "[SERVER] Parsed %d regions\r\n", server::regionCount);
-        log::debug(buf);
+        log::debugf("[SERVER] Parsed %d regions\r\n", server::regionCount);
     }
 }
 
@@ -370,7 +364,6 @@ namespace
 
 bool server::Init(void* gameBase, unsigned long gameSize)
 {
-    char buf[256];
     initialized = false;
 
     if (!gameBase || !gameSize) {
@@ -392,10 +385,9 @@ bool server::Init(void* gameBase, unsigned long gameSize)
         // Dword at match+29: vtable offset for SetPingSite
         SafeReadI32(matchAddr + 29, &g_SetPingSiteVtOff);
 
-        fmt::snprintf(buf, sizeof(buf),
+        log::debugf(
             "[SERVER] LoginAdaptorState: %p, connOff=0x%02X, vtOff=0x%X\r\n",
             (void*)g_LoginAdaptorState, (unsigned int)g_ConnectionOffset, (unsigned int)g_SetPingSiteVtOff);
-        log::debug(buf);
     } else {
         log::debug("[SERVER] ERROR: LoginAdaptorState pattern not found\r\n");
     }
@@ -419,13 +411,11 @@ bool server::Init(void* gameBase, unsigned long gameSize)
 
             if (firstBytes[0] == 0x48 && firstBytes[1] == 0x8B && firstBytes[2] == 0x05) {
                 g_ConfigManager = resolve_rip(getConfigMgrFn, 3, 7);
-                fmt::snprintf(buf, sizeof(buf), "[SERVER] ConfigManager: %p\r\n", (void*)g_ConfigManager);
-                log::debug(buf);
+                log::debugf("[SERVER] ConfigManager: %p\r\n", (void*)g_ConfigManager);
             } else {
-                fmt::snprintf(buf, sizeof(buf),
+                log::debugf(
                     "[SERVER] ERROR: getConfigMgrFn first bytes: %02X %02X %02X (expected 48 8B 05)\r\n",
                     (unsigned int)firstBytes[0], (unsigned int)firstBytes[1], (unsigned int)firstBytes[2]);
-                log::debug(buf);
             }
         } else {
             log::debug("[SERVER] ERROR: getConfigMgrFn resolve failed\r\n");
@@ -442,9 +432,8 @@ bool server::Init(void* gameBase, unsigned long gameSize)
         g_GetAliasFn = matchAddr;
         g_GetServiceLocatorFn = resolve_e8(matchAddr + 4);
 
-        fmt::snprintf(buf, sizeof(buf), "[SERVER] GetAliasFn: %p, ServiceLocator: %p\r\n",
+        log::debugf("[SERVER] GetAliasFn: %p, ServiceLocator: %p\r\n",
             (void*)g_GetAliasFn, (void*)g_GetServiceLocatorFn);
-        log::debug(buf);
     } else {
         log::debug("[SERVER] ERROR: GetBestPingSiteAlias pattern not found\r\n");
     }
@@ -454,8 +443,7 @@ bool server::Init(void* gameBase, unsigned long gameSize)
         "48 89 5C 24 ? 48 89 74 24 ? 57 48 83 EC 20 48 83 B9 70 02 00 00 00 0F B6 F2 48 8B D9 75 ? 48 8B 41 08 48 8B 88 38 08 00 00");
     if (m4) {
         g_QosPingDispatchAddr = (uintptr_t)m4;
-        fmt::snprintf(buf, sizeof(buf), "[SERVER] QosPingDispatch: %p\r\n", (void*)g_QosPingDispatchAddr);
-        log::debug(buf);
+        log::debugf("[SERVER] QosPingDispatch: %p\r\n", (void*)g_QosPingDispatchAddr);
     } else {
         log::debug("[SERVER] ERROR: QosPing_DispatchMeasurements pattern not found\r\n");
     }
@@ -465,15 +453,13 @@ bool server::Init(void* gameBase, unsigned long gameSize)
         "48 8B 0D ? ? ? ? E8 ? ? ? ? 48 8B C8 48 8B 10 48 83 C4 ? 48 FF 62 ? CC");
     if (m5) {
         g_BlazeWrapper = resolve_rip((uintptr_t)m5, 3, 7);
-        fmt::snprintf(buf, sizeof(buf), "[SERVER] BlazeWrapper: %p\r\n", (void*)g_BlazeWrapper);
-        log::debug(buf);
+        log::debugf("[SERVER] BlazeWrapper: %p\r\n", (void*)g_BlazeWrapper);
     } else {
         log::debug("[SERVER] WARNING: BlazeWrapper pattern not found, trying fallback\r\n");
         // Fallback: g_ConfigManager - 8
         if (g_ConfigManager) {
             g_BlazeWrapper = g_ConfigManager - 8;
-            fmt::snprintf(buf, sizeof(buf), "[SERVER] BlazeWrapper (fallback): %p\r\n", (void*)g_BlazeWrapper);
-            log::debug(buf);
+            log::debugf("[SERVER] BlazeWrapper (fallback): %p\r\n", (void*)g_BlazeWrapper);
         } else {
             log::debug("[SERVER] ERROR: BlazeWrapper fallback failed (no ConfigManager)\r\n");
         }
@@ -483,8 +469,7 @@ bool server::Init(void* gameBase, unsigned long gameSize)
     bool ok = g_LoginAdaptorState && g_BlazeWrapper && g_QosPingDispatchAddr && g_GetAliasFn;
     initialized = ok;
 
-    fmt::snprintf(buf, sizeof(buf), "[SERVER] Init: %s\r\n", ok ? "ALL OK" : "SOME MISSING");
-    log::debug(buf);
+    log::debugf("[SERVER] Init: %s\r\n", ok ? "ALL OK" : "SOME MISSING");
 
     return ok;
 }
@@ -503,9 +488,7 @@ void server::SetForcedPingSite(const char* alias)
     safe_strcpy(forcedPingSite, alias, sizeof(forcedPingSite));
     enableOverride = true;
 
-    char buf[256];
-    fmt::snprintf(buf, sizeof(buf), "[SERVER] Forcing ping site: %s\r\n", alias);
-    log::debug(buf);
+    log::debugf("[SERVER] Forcing ping site: %s\r\n", alias);
 
     // 1. Modify the QoS latency map
     ModifyLatencyMap(alias);
@@ -550,10 +533,8 @@ void server::RefreshCurrentPingSite()
         }
     }
 
-    char buf[128];
-    fmt::snprintf(buf, sizeof(buf), "[SERVER] Current ping site: %s\r\n",
+    log::debugf("[SERVER] Current ping site: %s\r\n",
         currentPingSite[0] ? currentPingSite : "N/A");
-    log::debug(buf);
 }
 
 // ── EnumerateRegions ────────────────────────────────────────────────────
@@ -628,12 +609,12 @@ void server::EnumerateRegions()
         while (outBuf[ci] && ci < 199) { truncBuf[ci] = outBuf[ci]; ci++; }
         truncBuf[ci] = '\0';
     }
-    fmt::snprintf(logBuf, sizeof(logBuf), "[SERVER] Raw config: %s\r\n", truncBuf);
-    log::debug(logBuf);
+    log::debugf("[SERVER] Raw config: %s\r\n", truncBuf);
 
     ParseRegionsString(outBuf);
 
     if (regionCount > 0) {
+        char logBuf[256];
         fmt::snprintf(logBuf, sizeof(logBuf), "Loaded %d regions", regionCount);
         toast::Show(toast::Type::Success, logBuf);
     } else {

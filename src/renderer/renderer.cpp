@@ -77,9 +77,7 @@ void D3D12Renderer::CreateFontTexture() {
 			(const D3D12_CLEAR_VALUE*)nullptr, &iid, reinterpret_cast<void**>(&m_fontTexture));
 	}
 	if (FAILED(hr)) {
-		char buf[128];
-		fmt::snprintf(buf, sizeof(buf), "[Renderer] Font texture failed: 0x%08X\r\n", (unsigned)hr);
-		log::debug(buf);
+		log::debugf("[Renderer] Font texture failed: 0x%08X\r\n", (unsigned)hr);
 		return;
 	}
 
@@ -118,19 +116,13 @@ void D3D12Renderer::CreateFontTexture() {
 			(const D3D12_CLEAR_VALUE*)nullptr, &iid, reinterpret_cast<void**>(&m_fontUploadHeap));
 	}
 	if (FAILED(hr)) {
-		char b2[128];
-		fmt::snprintf(b2, sizeof(b2), "[Renderer] Font upload heap FAIL: 0x%08X\r\n", (unsigned)hr);
-		log::debug(b2);
+		log::debugf("[Renderer] Font upload heap FAIL: 0x%08X\r\n", (unsigned)hr);
 		SpoofVCall<ULONG>(m_fontTexture, com_vtable::Release);
 		m_fontTexture = nullptr;
 		return;
 	}
-	{
-		char b2[128];
-		fmt::snprintf(b2, sizeof(b2), "[Renderer] Font upload heap=%p size=%llu\r\n",
-			m_fontUploadHeap, (unsigned long long)uploadSize);
-		log::debug(b2);
-	}
+	log::debugf("[Renderer] Font upload heap=%p size=%llu\r\n",
+		m_fontUploadHeap, (unsigned long long)uploadSize);
 
 	void* mapped = nullptr;
 	SpoofVCall<HRESULT>(m_fontUploadHeap, d3d12_vtable::Resource::Map,
@@ -255,12 +247,8 @@ void D3D12Renderer::CreateFontTexture() {
 		srvDesc.ViewDimension                 = D3D12_SRV_DIMENSION_TEXTURE2D;
 		srvDesc.Shader4ComponentMapping       = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 		srvDesc.Texture2D.MipLevels           = 1;
-		{
-			char b[256];
-			fmt::snprintf(b, sizeof(b), "[Renderer] Creating SRV: tex=%p cpuHandle=%llX device=%p\r\n",
-				m_fontTexture, (unsigned long long)m_fontSrvCpu.ptr, m_device);
-			log::debug(b);
-		}
+		log::debugf("[Renderer] Creating SRV: tex=%p cpuHandle=%llX device=%p\r\n",
+			m_fontTexture, (unsigned long long)m_fontSrvCpu.ptr, m_device);
 		SpoofVCall(m_device, d3d12_vtable::Device::CreateShaderResourceView,
 			(ID3D12Resource*)m_fontTexture, (const D3D12_SHADER_RESOURCE_VIEW_DESC*)&srvDesc,
 			(D3D12_CPU_DESCRIPTOR_HANDLE)m_fontSrvCpu);
@@ -280,9 +268,7 @@ bool D3D12Renderer::Init(ID3D12Device* dev, DXGI_FORMAT rtvFormat) {
 	if (!dev) return false;
 	m_device = dev;
 
-	char buf[256];
-	fmt::snprintf(buf, sizeof(buf), "[Renderer] Init device=%p format=%u\r\n", dev, (unsigned)rtvFormat);
-	log::debug(buf);
+	log::debugf("[Renderer] Init device=%p format=%u\r\n", dev, (unsigned)rtvFormat);
 
 	// SRV Descriptor Heap
 	D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
@@ -299,23 +285,15 @@ bool D3D12Renderer::Init(ID3D12Device* dev, DXGI_FORMAT rtvFormat) {
 		hr = spoof_call(reinterpret_cast<fn_t>(vt[d3d12_vtable::Device::CreateDescriptorHeap]),
 			m_device, (const D3D12_DESCRIPTOR_HEAP_DESC*)&heapDesc, &iid, reinterpret_cast<void**>(&m_srvHeap));
 	}
-	{
-		char b[128];
-		fmt::snprintf(b, sizeof(b), "[Renderer] SRV heap hr=0x%08X heap=%p\r\n", (unsigned)hr, m_srvHeap);
-		log::debug(b);
-	}
+	log::debugf("[Renderer] SRV heap hr=0x%08X heap=%p\r\n", (unsigned)hr, m_srvHeap);
 	if (FAILED(hr)) return false;
 
 	// Direct calls — trivial getters, not monitored by AC, and spoof_call
 	// has ABI issues with struct-returning COM methods.
 	m_fontSrvCpu = m_srvHeap->GetCPUDescriptorHandleForHeapStart();
 	m_fontSrvGpu = m_srvHeap->GetGPUDescriptorHandleForHeapStart();
-	{
-		char b[128];
-		fmt::snprintf(b, sizeof(b), "[Renderer] DescHandles cpu=%llX gpu=%llX\r\n",
-			(unsigned long long)m_fontSrvCpu.ptr, (unsigned long long)m_fontSrvGpu.ptr);
-		log::debug(b);
-	}
+	log::debugf("[Renderer] DescHandles cpu=%llX gpu=%llX\r\n",
+		(unsigned long long)m_fontSrvCpu.ptr, (unsigned long long)m_fontSrvGpu.ptr);
 
 	// Root Signature
 	D3D12_ROOT_PARAMETER rootParams[2] = {};
@@ -351,31 +329,19 @@ bool D3D12Renderer::Init(ID3D12Device* dev, DXGI_FORMAT rtvFormat) {
 
 	HMODULE hD3D12 = (HMODULE)peb::GetModuleBase("d3d12.dll");
 	if (!hD3D12) { log::to_file("[Renderer] FAIL: d3d12.dll not in PEB\r\n"); return false; }
-	{
-		char b[128];
-		fmt::snprintf(b, sizeof(b), "[Renderer] d3d12.dll base=%p\r\n", hD3D12);
-		log::debug(b);
-	}
+	log::debugf("[Renderer] d3d12.dll base=%p\r\n", hD3D12);
 
 	auto pfnSerialize = (PFN_D3D12_SERIALIZE_ROOT_SIGNATURE)
 		peb::GetExportAddress(hD3D12, "D3D12SerializeRootSignature");
 	if (!pfnSerialize) { log::to_file("[Renderer] FAIL: D3D12SerializeRootSignature export not found\r\n"); return false; }
-	{
-		char b[128];
-		fmt::snprintf(b, sizeof(b), "[Renderer] SerializeRootSig=%p\r\n", pfnSerialize);
-		log::debug(b);
-	}
+	log::debugf("[Renderer] SerializeRootSig=%p\r\n", pfnSerialize);
 
 	ID3DBlob* sigBlob = nullptr;
 	ID3DBlob* errBlob = nullptr;
 	hr = spoof_call(pfnSerialize, (const D3D12_ROOT_SIGNATURE_DESC*)&rsDesc,
 		(D3D_ROOT_SIGNATURE_VERSION)D3D_ROOT_SIGNATURE_VERSION_1, (ID3DBlob**)&sigBlob, (ID3DBlob**)&errBlob);
-	{
-		char b[128];
-		fmt::snprintf(b, sizeof(b), "[Renderer] SerializeRootSig hr=0x%08X blob=%p err=%p\r\n",
-			(unsigned)hr, sigBlob, errBlob);
-		log::debug(b);
-	}
+	log::debugf("[Renderer] SerializeRootSig hr=0x%08X blob=%p err=%p\r\n",
+		(unsigned)hr, sigBlob, errBlob);
 	if (errBlob) SpoofVCall<ULONG>(errBlob, com_vtable::Release);
 	if (FAILED(hr)) { if (sigBlob) SpoofVCall<ULONG>(sigBlob, com_vtable::Release); return false; }
 
@@ -393,11 +359,7 @@ bool D3D12Renderer::Init(ID3D12Device* dev, DXGI_FORMAT rtvFormat) {
 			m_device, (UINT)0, (const void*)blobData, blobSize, &iid, reinterpret_cast<void**>(&m_rootSig));
 	}
 	SpoofVCall<ULONG>(sigBlob, com_vtable::Release);
-	{
-		char b[128];
-		fmt::snprintf(b, sizeof(b), "[Renderer] CreateRootSig hr=0x%08X rootSig=%p\r\n", (unsigned)hr, m_rootSig);
-		log::debug(b);
-	}
+	log::debugf("[Renderer] CreateRootSig hr=0x%08X rootSig=%p\r\n", (unsigned)hr, m_rootSig);
 	if (FAILED(hr)) { Shutdown(); return false; }
 
 	// PSO
@@ -452,11 +414,7 @@ bool D3D12Renderer::Init(ID3D12Device* dev, DXGI_FORMAT rtvFormat) {
 		hr = spoof_call(reinterpret_cast<fn_t>(vt[d3d12_vtable::Device::CreateGraphicsPipelineState]),
 			m_device, (const D3D12_GRAPHICS_PIPELINE_STATE_DESC*)&psoDesc, &iid, reinterpret_cast<void**>(&m_pso));
 	}
-	{
-		char b[128];
-		fmt::snprintf(b, sizeof(b), "[Renderer] CreatePSO hr=0x%08X pso=%p\r\n", (unsigned)hr, m_pso);
-		log::debug(b);
-	}
+	log::debugf("[Renderer] CreatePSO hr=0x%08X pso=%p\r\n", (unsigned)hr, m_pso);
 	if (FAILED(hr)) { Shutdown(); return false; }
 
 	// Vertex Buffer
@@ -484,22 +442,14 @@ bool D3D12Renderer::Init(ID3D12Device* dev, DXGI_FORMAT rtvFormat) {
 			(const D3D12_RESOURCE_DESC*)&vbDesc, D3D12_RESOURCE_STATE_GENERIC_READ,
 			(const D3D12_CLEAR_VALUE*)nullptr, &iid, reinterpret_cast<void**>(&m_vertexBuffer));
 	}
-	{
-		char b[128];
-		fmt::snprintf(b, sizeof(b), "[Renderer] VertexBuffer hr=0x%08X vb=%p size=%u\r\n",
-			(unsigned)hr, m_vertexBuffer, (unsigned)bufferSize);
-		log::debug(b);
-	}
+	log::debugf("[Renderer] VertexBuffer hr=0x%08X vb=%p size=%u\r\n",
+		(unsigned)hr, m_vertexBuffer, (unsigned)bufferSize);
 	if (FAILED(hr)) { Shutdown(); return false; }
 
 	D3D12_RANGE readRange = { 0, 0 };
 	hr = SpoofVCall<HRESULT>(m_vertexBuffer, d3d12_vtable::Resource::Map,
 		(UINT)0, (const D3D12_RANGE*)&readRange, (void**)&m_mappedVerts);
-	{
-		char b[128];
-		fmt::snprintf(b, sizeof(b), "[Renderer] VB Map hr=0x%08X mapped=%p\r\n", (unsigned)hr, m_mappedVerts);
-		log::debug(b);
-	}
+	log::debugf("[Renderer] VB Map hr=0x%08X mapped=%p\r\n", (unsigned)hr, m_mappedVerts);
 	if (FAILED(hr)) { Shutdown(); return false; }
 
 	CreateFontTexture();

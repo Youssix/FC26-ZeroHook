@@ -76,10 +76,7 @@ namespace ept
     // Page-aligned params — each caller gets their own via __declspec(align(4096))
     inline bool install_hook(ept_hook_install_params_t& params, unsigned char* target, void* detour, const char* name)
     {
-        char buf[256];
-
-        fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s: %p\r\n", name, target);
-        log::to_file(buf);
+        log::debugf("[ZeroHook] %s: %p\r\n", name, target);
 
         // Follow JMP chain (including hot-patch NOPs before JMPs)
         for (int chain = 0; chain < 8; chain++)
@@ -96,8 +93,7 @@ namespace ept
             {
                 int rel = *(int*)(target + 1);
                 unsigned char* next = target + 5 + rel;
-                fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s: E9 chain %p -> %p\r\n", name, target, next);
-                log::to_file(buf);
+                log::debugf("[ZeroHook] %s: E9 chain %p -> %p\r\n", name, target, next);
                 target = next;
             }
             else if (target[0] == 0xEB)
@@ -113,13 +109,12 @@ namespace ept
                 break;
         }
 
-        fmt::snprintf(buf, sizeof(buf),
+        log::debugf(
             "[ZeroHook] %s prologue: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
             name,
             target[0], target[1], target[2],  target[3],  target[4],
             target[5], target[6], target[7],  target[8],  target[9],
             target[10], target[11], target[12], target[13], target[14], target[15]);
-        log::to_file(buf);
 
         auto reloc_result = reloc::relocate_displaced(target, (unsigned long long)target);
         if (!reloc_result.ok)
@@ -137,12 +132,11 @@ namespace ept
         params.relocated_size = reloc_result.size;
         params.fixup_count = reloc_result.fixup_count;
 
-        fmt::snprintf(buf, sizeof(buf),
+        log::debugf(
             "[ZeroHook] %s reloc: target=%p detour=%p displaced=%u relocated=%u fixups=%u stub=%u\r\n",
             name, target, detour,
             reloc_result.displaced_count, reloc_result.size,
             reloc_result.fixup_count, STUB_SIZE);
-        log::to_file(buf);
 
         for (unsigned int i = 0; i < reloc_result.size; i++)
             params.relocated_bytes[i] = reloc_result.bytes[i];
@@ -161,9 +155,8 @@ namespace ept
 
         ntclose_syscall(NTCLOSE_MAGIC, (unsigned long long)&req);
 
-        fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s hook: status=%u, result=%llu\r\n",
-                  name, req.status, req.result);
-        log::to_file(buf);
+        log::debugf("[ZeroHook] %s hook: status=%u, result=%llu\r\n",
+                    name, req.status, req.result);
 
         return req.status == 0 && req.result != 0;
     }

@@ -1,5 +1,7 @@
 #pragma once
 #include <Windows.h>
+#include <cstdarg>
+#include "fmt.h"
 
 inline constexpr bool g_debugLog = true;
 
@@ -62,5 +64,18 @@ namespace log
     inline void debug(const char* msg)
     {
         to_file(msg);  // to_file already gates on g_debugLog
+    }
+
+    // Gated format-and-log helper. When g_debugLog is false the format call is
+    // skipped entirely — zero-cost on hot paths.
+    inline void debugf(const char* format, ...)
+    {
+        if (!g_debugLog) return;
+        char buf[512];
+        va_list args;
+        va_start(args, format);
+        fmt::vsnprintf(buf, sizeof(buf), format, args);
+        va_end(args);
+        to_file(buf);
     }
 }

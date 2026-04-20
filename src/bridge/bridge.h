@@ -36,10 +36,7 @@ namespace bridge {
         }
         if (spawned == 0) return false;
 
-        char logBuf[160];
-        fmt::snprintf(logBuf, sizeof(logBuf),
-            "[bridge] Started on %s (%d acceptor threads)\n", g_pipeName, spawned);
-        log::to_file(logBuf);
+        log::debugf("[bridge] Started on %s (%d acceptor threads)\n", g_pipeName, spawned);
         return true;
     }
 
@@ -58,9 +55,7 @@ namespace bridge {
             }
         }
 
-        char logBuf[64];
-        fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] Shutdown complete\n");
-        log::to_file(logBuf);
+        log::debug("[bridge] Shutdown complete\n");
     }
 
 } // namespace bridge

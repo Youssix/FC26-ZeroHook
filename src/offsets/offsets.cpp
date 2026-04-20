@@ -58,8 +58,6 @@ namespace
 // ── Init ────────────────────────────────────────────────────────────
 bool offsets::Init()
 {
-    char buf[256];
-
     // ── 1. Game module ──────────────────────────────────────────────
     log::debug("[offsets] [1/7] find_module()...\r\n");
     game::ModuleInfo mod = game::find_module();
@@ -70,17 +68,15 @@ bool offsets::Init()
     }
     GameBase = mod.base;
     GameSize = mod.size;
-    fmt::snprintf(buf, sizeof(buf), "[offsets] [1/7] OK Game: %p  size=0x%lX\r\n", GameBase, GameSize);
-    log::debug(buf);
+    log::debugf("[offsets] [1/7] OK Game: %p  size=0x%lX\r\n", GameBase, GameSize);
 
     // ── 2. Spoof gadget (FF 23 = jmp [rbx]) ────────────────────────
     log::debug("[offsets] [2/7] Spoof gadget pattern scan...\r\n");
     void* gadgetMatch = game::pattern_scan(GameBase, GameSize, "E8 ? ? ? ? FF 23");
     if (gadgetMatch)
         SpoofLocation = (void*)((uintptr_t)gadgetMatch + 5);
-    fmt::snprintf(buf, sizeof(buf), "[offsets] [2/7] %s SpoofLocation: %p\r\n",
+    log::debugf("[offsets] [2/7] %s SpoofLocation: %p\r\n",
         SpoofLocation ? "OK" : "FAIL", SpoofLocation);
-    log::debug(buf);
 
     // ── 3. SwapChain ────────────────────────────────────────────────
     //   Pattern: mov [rip+disp32], rdi; mov [rip+disp32], r14
@@ -100,9 +96,8 @@ bool offsets::Init()
             }
         }
     }
-    fmt::snprintf(buf, sizeof(buf), "[offsets] [3/7] %s SwapChain: %p\r\n",
+    log::debugf("[offsets] [3/7] %s SwapChain: %p\r\n",
         SwapChain ? "OK" : "FAIL (D3D not ready yet — normal at inject)", SwapChain);
-    log::debug(buf);
 
     // ── 4. Frostbite InputReader ────────────────────────────────────
     //   Pattern inside EACoreKeyboardPoller::update:
@@ -123,18 +118,16 @@ bool offsets::Init()
             }
             else
             {
-                fmt::snprintf(buf, sizeof(buf),
+                log::debugf(
                     "[offsets] [4/7] InputReader unexpected opcode 0x%02X at %p\r\n",
                     *(unsigned char*)getReader, (void*)getReader);
-                log::debug(buf);
             }
         } __except (1) {
             log::debug("[offsets] [4/7] EXCEPTION resolving InputReader\r\n");
         }
     }
-    fmt::snprintf(buf, sizeof(buf), "[offsets] [4/7] %s InputReader: %p\r\n",
+    log::debugf("[offsets] [4/7] %s InputReader: %p\r\n",
         InputReader ? "OK" : "FAIL", (void*)InputReader);
-    log::debug(buf);
 
     // ── 5. InputReader vtable functions ──────────────────────────────
     log::debug("[offsets] [5/7] InputReader vtable read...\r\n");
@@ -155,10 +148,9 @@ bool offsets::Init()
                 FnGetMouseDeltaX   = vtable[24];
                 FnGetMouseDeltaY   = vtable[25];
                 FnGetMouseScroll   = vtable[26];
-                fmt::snprintf(buf, sizeof(buf),
+                log::debugf(
                     "[offsets] [5/7] OK vtable=%p IsKeyDown=%p IsMouseDown=%p\r\n",
                     (void*)vtable, FnIsKeyDown, FnIsMouseDown);
-                log::debug(buf);
             } else {
                 log::debug("[offsets] [5/7] FAIL vtable is NULL\r\n");
             }
@@ -192,19 +184,17 @@ bool offsets::Init()
             log::debug("[offsets] [6/7] EXCEPTION resolving GameDispatchVTable\r\n");
         }
     }
-    fmt::snprintf(buf, sizeof(buf),
+    log::debugf(
         "[offsets] [6/7] %s GameDispatchVTable: %p  RouteGameMessage: %p\r\n",
         (GameDispatchVTable && FnRouteGameMessage) ? "OK" : "FAIL",
         (void*)GameDispatchVTable, FnRouteGameMessage);
-    log::debug(buf);
 
     // ── 6b. AltTabSender (SystemOnAltTabMessage dispatch) ──────────
     FnAltTabSender = game::pattern_scan(GameBase, GameSize,
         "48 83 EC ? E8 ? ? ? ? 48 85 C0 74 ? 48 8D 0D");
-    fmt::snprintf(buf, sizeof(buf),
+    log::debugf(
         "[offsets] [6b] %s AltTabSender: %p\r\n",
         FnAltTabSender ? "OK" : "FAIL", FnAltTabSender);
-    log::debug(buf);
 
     // ── 7. PlayerSide vtable (vtable[0xD]) ──────────────────────────
     log::debug("[offsets] [7/7] PlayerSide vtable pattern scan...\r\n");
@@ -224,11 +214,10 @@ bool offsets::Init()
             log::debug("[offsets] [7/7] EXCEPTION resolving PlayerSide vtable\r\n");
         }
     }
-    fmt::snprintf(buf, sizeof(buf),
+    log::debugf(
         "[offsets] [7/7] %s PlayerSideVTable: %p  FnPlayerSide: %p\r\n",
         (PlayerSideVTable && FnPlayerSide) ? "OK" : "FAIL",
         (void*)PlayerSideVTable, FnPlayerSide);
-    log::debug(buf);
 
     // ── 8. MatchTimer vtable (vtable[1]) ────────────────────────────
     //   Pattern from FC26-Internal/features/offset.cpp:405 — a LEA RAX,[rip+match_time_vtable]
@@ -250,11 +239,10 @@ bool offsets::Init()
             log::debug("[offsets] [8] EXCEPTION resolving MatchTimer vtable\r\n");
         }
     }
-    fmt::snprintf(buf, sizeof(buf),
+    log::debugf(
         "[offsets] [8] %s MatchTimerVTable: %p  FnMatchTimer: %p\r\n",
         (MatchTimerVTable && FnMatchTimer) ? "OK" : "FAIL",
         (void*)MatchTimerVTable, FnMatchTimer);
-    log::debug(buf);
 
     // ── 9. Match-ctx getter (sub_142805590) ────────────────────────
     //   Body: mov rax,[global]; cmp byte-guard; cmovz rax,0;
@@ -263,10 +251,9 @@ bool offsets::Init()
     //   no more EPT AFK hook needed to capture context.
     FnGetMatchCtx = game::pattern_scan(GameBase, GameSize,
         "48 8B 05 ? ? ? ? 33 C9 38 0D ? ? ? ? 48 0F 44 C1 48 8B 80 80 10 00 00 48 8B 80 30 01 00 00 C3");
-    fmt::snprintf(buf, sizeof(buf),
+    log::debugf(
         "[offsets] [9] %s FnGetMatchCtx: %p\r\n",
         FnGetMatchCtx ? "OK" : "FAIL", FnGetMatchCtx);
-    log::debug(buf);
 
     // ── 10. AI slot resolver (sub_142329490) ───────────────────────
     //   Prologue: xor eax,eax; mov r9d,edx; mov r10d,0xFFFFFFFF
@@ -275,10 +262,9 @@ bool offsets::Init()
     //   per-round table (not playerside) — see SendAiTakeover.
     FnAiSlotResolver = game::pattern_scan(GameBase, GameSize,
         "33 C0 44 8B CA 41 BA");
-    fmt::snprintf(buf, sizeof(buf),
+    log::debugf(
         "[offsets] [10] %s FnAiSlotResolver: %p\r\n",
         FnAiSlotResolver ? "OK" : "FAIL", FnAiSlotResolver);
-    log::debug(buf);
 
     // ── 11. AI state sync broadcast (sub_14282B1D0) ────────────────
     //   Prologue distinctive: mov rax,rsp / mov [rax+18],rbx /
@@ -288,10 +274,9 @@ bool offsets::Init()
     //   0x4E9507C9 with a 0x290-byte payload.
     FnAiStateSync = game::pattern_scan(GameBase, GameSize,
         "48 8B C4 48 89 58 18 55 56 57 41 54 41 55 41 56 41 57 48 8D A8 D8 F9 FF FF 48 81 EC 90 07 00 00");
-    fmt::snprintf(buf, sizeof(buf),
+    log::debugf(
         "[offsets] [11] %s FnAiStateSync: %p\r\n",
         FnAiStateSync ? "OK" : "FAIL", FnAiStateSync);
-    log::debug(buf);
 
     // ── 12. AFK takeover handler (sub_1427F7640) ───────────────────
     //   Prologue: push rbp/rsi/rdi/r13; lea rbp,[rsp-0x3F];
@@ -302,10 +287,9 @@ bool offsets::Init()
     //   the sec-cookie dance right after the large stack allocation.
     FnAfkTakeover = game::pattern_scan(GameBase, GameSize,
         "40 55 56 57 41 55 48 8D 6C 24 C1 48 81 EC C8 00 00 00 48 8B 05 ? ? ? ? 48 33 C4 48 89 45 ? 48 63 F2 45 0F B6 E8");
-    fmt::snprintf(buf, sizeof(buf),
+    log::debugf(
         "[offsets] [12] %s FnAfkTakeover: %p\r\n",
         FnAfkTakeover ? "OK" : "FAIL", FnAfkTakeover);
-    log::debug(buf);
 
     // ── 12b. AI takeover dispatcher (sub_142812730) ────────────────
     //   The canonical cursor/AI-controller state machine entry point.
@@ -318,10 +302,9 @@ bool offsets::Init()
     //   via mov rbx, [rip+disp] (the qword_14D895190 ref).
     FnAiTakeoverDispatch = game::pattern_scan(GameBase, GameSize,
         "48 89 5C 24 10 48 89 6C 24 18 57 48 83 EC 20 48 8B 1D ? ? ? ? 33 C0 38 05");
-    fmt::snprintf(buf, sizeof(buf),
+    log::debugf(
         "[offsets] [12b] %s FnAiTakeoverDispatch: %p\r\n",
         FnAiTakeoverDispatch ? "OK" : "FAIL", FnAiTakeoverDispatch);
-    log::debug(buf);
 
     // ── 12c. AI takeover enabler (sub_1427FD810) ───────────────────
     //   Invoked by FnAiTakeoverDispatch on mode=0 path. Does the heavy
@@ -336,10 +319,9 @@ bool offsets::Init()
     //   in the binary checks this exact offset with this prologue shape.
     FnAiTakeoverEnabler = game::pattern_scan(GameBase, GameSize,
         "40 55 53 57 41 55 48 8D AC 24 A8 FE FF FF 48 81 EC 58 02 00 00 48 8B 05 ? ? ? ? 48 33 C4 48 89 85 ? ? ? ? 80 B9 A8 1A 00 00 00");
-    fmt::snprintf(buf, sizeof(buf),
+    log::debugf(
         "[offsets] [12c] %s FnAiTakeoverEnabler: %p\r\n",
         FnAiTakeoverEnabler ? "OK" : "FAIL", FnAiTakeoverEnabler);
-    log::debug(buf);
 
     // ── 12d. Public TakeOver API (sub_142814760) ────────────────────
     //   Per-slot AFK/AI takeover. Writes slot+0x194=1 (the local-away
@@ -350,10 +332,9 @@ bool offsets::Init()
     //   The 0x2430 stack allocation for 22-slot snapshot is distinctive.
     FnTakeOverSlot = game::pattern_scan(GameBase, GameSize,
         "48 89 5C 24 ? 55 56 57 41 54 41 55 41 56 41 57 B8 30 24 00 00 E8");
-    fmt::snprintf(buf, sizeof(buf),
+    log::debugf(
         "[offsets] [12d] %s FnTakeOverSlot: %p\r\n",
         FnTakeOverSlot ? "OK" : "FAIL", FnTakeOverSlot);
-    log::debug(buf);
 
     // ── 12e. Low-level CLAIM primitive (sub_14281B970) ──────────────
     //   Signature: void __fastcall(matchData*, uint32_t team_player[2]).
@@ -366,10 +347,9 @@ bool offsets::Init()
     //   the stack-frame size — stable across minor updates.
     FnClaimSlot = game::pattern_scan(GameBase, GameSize,
         "4C 8B DC 55 53 57 41 55 41 57 49 8D 6B A1 48 81 EC B0 00 00 00 48 8B 05");
-    fmt::snprintf(buf, sizeof(buf),
+    log::debugf(
         "[offsets] [12e] %s FnClaimSlot: %p\r\n",
         FnClaimSlot ? "OK" : "FAIL", FnClaimSlot);
-    log::debug(buf);
 
     // ── 13. State-root pointer global (qword_14D895190) ────────────
     //   First instruction of sub_142805590 is:
@@ -387,10 +367,9 @@ bool offsets::Init()
             StateRootPtrAddr = 0;
         }
     }
-    fmt::snprintf(buf, sizeof(buf),
+    log::debugf(
         "[offsets] [13] %s StateRootPtrAddr: %p\r\n",
         StateRootPtrAddr ? "OK" : "FAIL", (void*)StateRootPtrAddr);
-    log::debug(buf);
 
     // ── 14. EAID vtable (vtable[23]) ─────────────────────────────────
     //   Pattern: LEA RAX,[rip+vtable]; xor edi,edi; mov [rbx],rax;
@@ -412,11 +391,10 @@ bool offsets::Init()
             log::debug("[offsets] [14] EXCEPTION resolving EAID vtable\r\n");
         }
     }
-    fmt::snprintf(buf, sizeof(buf),
+    log::debugf(
         "[offsets] [14] %s EAIDVTable: %p  FnEAID: %p\r\n",
         (EAIDVTable && FnEAID) ? "OK" : "FAIL",
         (void*)EAIDVTable, FnEAID);
-    log::debug(buf);
 
     log::debug("[offsets] Init complete\r\n");
     return true;

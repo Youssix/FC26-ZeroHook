@@ -107,7 +107,6 @@ int division::GetDivisionCount()
 
 bool division::Init(void* gameBase, unsigned long gameSize)
 {
-    char buf[256];
     initialized = false;
 
     if (!gameBase || !gameSize) {
@@ -123,16 +122,14 @@ bool division::Init(void* gameBase, unsigned long gameSize)
         "48 8D 0D ? ? ? ? 33 ED 8B C5");
     if (m1) {
         g_divspooferVtable = resolve_rip3_7((uintptr_t)m1);
-        fmt::snprintf(buf, sizeof(buf), "[DIV] divspoofer_vtable: %p\r\n", (void*)g_divspooferVtable);
-        log::debug(buf);
+        log::debugf("[DIV] divspoofer_vtable: %p\r\n", (void*)g_divspooferVtable);
 
         // Read vtable[54] -- the function we need to hook
         if (g_divspooferVtable) {
             __try {
                 uintptr_t* vtable = reinterpret_cast<uintptr_t*>(g_divspooferVtable);
                 g_divspooferFunc = vtable[54];
-                fmt::snprintf(buf, sizeof(buf), "[DIV] vtable[54] thunk: %p\r\n", (void*)g_divspooferFunc);
-                log::debug(buf);
+                log::debugf("[DIV] vtable[54] thunk: %p\r\n", (void*)g_divspooferFunc);
 
                 // vtable[54] is a thunk: mov rcx, rdx (48 89 D1); jmp real_func (E9 xx xx xx xx)
                 // EPT hook needs >= 14 bytes prologue, thunk is only 8 bytes.
@@ -141,8 +138,7 @@ bool division::Init(void* gameBase, unsigned long gameSize)
                 if (fn[0] == 0x48 && fn[1] == 0x89 && fn[2] == 0xD1 && fn[3] == 0xE9) {
                     int32_t rel = *reinterpret_cast<int32_t*>(fn + 4);
                     g_divspooferFunc = (uintptr_t)(fn + 8 + rel);
-                    fmt::snprintf(buf, sizeof(buf), "[DIV] vtable[54] real func: %p\r\n", (void*)g_divspooferFunc);
-                    log::debug(buf);
+                    log::debugf("[DIV] vtable[54] real func: %p\r\n", (void*)g_divspooferFunc);
                 }
             } __except(1) {
                 log::debug("[DIV] ERROR: exception reading vtable[54]\r\n");
@@ -159,19 +155,17 @@ bool division::Init(void* gameBase, unsigned long gameSize)
         "0F 84 ? ? ? ? 49 8B 45 ? 49 8B CD FF 90 ? ? ? ? 89 45");
     if (m2) {
         g_coopRivalsAddr = (uintptr_t)m2;
-        fmt::snprintf(buf, sizeof(buf), "[DIV] coop_rivals_addr: %p\r\n", (void*)g_coopRivalsAddr);
-        log::debug(buf);
+        log::debugf("[DIV] coop_rivals_addr: %p\r\n", (void*)g_coopRivalsAddr);
     } else {
         log::debug("[DIV] WARNING: coop_rivals pattern not found\r\n");
     }
 
     initialized = (g_divspooferFunc != 0);
 
-    fmt::snprintf(buf, sizeof(buf), "[DIV] Init %s (vtable=%d coop=%d)\r\n",
+    log::debugf("[DIV] Init %s (vtable=%d coop=%d)\r\n",
         initialized ? "OK" : "PARTIAL",
         g_divspooferFunc != 0 ? 1 : 0,
         g_coopRivalsAddr != 0 ? 1 : 0);
-    log::debug(buf);
 
     return initialized;
 }
@@ -229,10 +223,8 @@ void division::UpdateValues(int divIndex)
     srPoints = div.srPoints;
     progressionRank = div.progressionRank;
 
-    char buf[128];
-    fmt::snprintf(buf, sizeof(buf), "[DIV] Values: elite=%u sr=%u prog=%u idx=%d\r\n",
+    log::debugf("[DIV] Values: elite=%u sr=%u prog=%u idx=%d\r\n",
         isElite, srPoints, progressionRank, divIndex);
-    log::debug(buf);
 }
 
 void division::SetCoopRivals(bool enable)
@@ -267,9 +259,7 @@ void division::SetCoopRivals(bool enable)
             toast::Show(toast::Type::Success, "Coop Rivals enabled");
             log::debug("[DIV] Coop Rivals: JZ -> JNZ\r\n");
         } else {
-            char buf[128];
-            fmt::snprintf(buf, sizeof(buf), "[DIV] Coop Rivals write failed (status=%u)\r\n", req.status);
-            log::debug(buf);
+            log::debugf("[DIV] Coop Rivals write failed (status=%u)\r\n", req.status);
             toast::Show(toast::Type::Error, "Coop Rivals patch failed");
         }
     }
@@ -287,9 +277,7 @@ void division::SetCoopRivals(bool enable)
             toast::Show(toast::Type::Info, "Coop Rivals disabled");
             log::debug("[DIV] Coop Rivals: restored original\r\n");
         } else {
-            char buf[128];
-            fmt::snprintf(buf, sizeof(buf), "[DIV] Coop Rivals restore failed (status=%u)\r\n", req.status);
-            log::debug(buf);
+            log::debugf("[DIV] Coop Rivals restore failed (status=%u)\r\n", req.status);
             toast::Show(toast::Type::Error, "Coop Rivals restore failed");
         }
     }

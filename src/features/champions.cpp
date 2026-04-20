@@ -64,10 +64,8 @@ namespace
 
             static bool s_logged = false;
             if (!s_logged) {
-                char buf[128];
-                fmt::snprintf(buf, sizeof(buf),
+                log::debugf(
                     "[CHAMP] a3=%d -> %d | spoof ON\r\n", a3, final_a3);
-                log::debug(buf);
                 toast::Show(toast::Type::Success, "WL Score spoof active");
                 s_logged = true;
             }
@@ -79,7 +77,6 @@ namespace
 
 bool champions::Init(void* gameBase, unsigned long gameSize)
 {
-    char buf[256];
     initialized = false;
 
     if (!gameBase || !gameSize) {
@@ -102,8 +99,7 @@ bool champions::Init(void* gameBase, unsigned long gameSize)
         return false;
     }
 
-    fmt::snprintf(buf, sizeof(buf), "[CHAMP] vtable base: %p\r\n", (void*)g_vtableBase);
-    log::debug(buf);
+    log::debugf("[CHAMP] vtable base: %p\r\n", (void*)g_vtableBase);
 
     // Read slot 53 function pointer
     __try {
@@ -119,8 +115,7 @@ bool champions::Init(void* gameBase, unsigned long gameSize)
         return false;
     }
 
-    fmt::snprintf(buf, sizeof(buf), "[CHAMP] slot 53 func: %p\r\n", (void*)g_targetFunc);
-    log::debug(buf);
+    log::debugf("[CHAMP] slot 53 func: %p\r\n", (void*)g_targetFunc);
 
     initialized = true;
     log::debug("[CHAMP] Init OK (pattern scan done, hook not installed yet)\r\n");

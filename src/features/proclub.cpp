@@ -46,6 +46,7 @@ namespace
     void log_bytes(const char* label, uintptr_t addr,
                    const unsigned char* bytes, int size)
     {
+        if (!g_debugLog) return;
         char buf[256];
         int pos = fmt::snprintf(buf, sizeof(buf), "[PROCLUB] %s @%p [%d]: ",
             label, (void*)addr, size);
@@ -59,8 +60,6 @@ namespace
 
 bool proclub::Init(void* gameBase, unsigned long gameSize)
 {
-    char buf[256];
-
     // --- Search Alone ---
     log::debug("[PROCLUB] Scanning SearchAlone pattern...\r\n");
     void* m = game::pattern_scan(gameBase, gameSize,
@@ -69,8 +68,7 @@ bool proclub::Init(void* gameBase, unsigned long gameSize)
     {
         g_searchAloneAddr  = (uintptr_t)m;
         g_searchAloneReady = true;
-        fmt::snprintf(buf, sizeof(buf), "[PROCLUB] SearchAlone: %p\r\n", m);
-        log::debug(buf);
+        log::debugf("[PROCLUB] SearchAlone: %p\r\n", m);
     }
     else
         log::debug("[PROCLUB] ERROR: SearchAlone pattern not found\r\n");
@@ -92,19 +90,17 @@ bool proclub::Init(void* gameBase, unsigned long gameSize)
             intptr_t dist = (intptr_t)cave - (intptr_t)((unsigned char*)s + 5);
             if (dist > 0x7FFFFFFFL || dist < -(intptr_t)0x7FFFFFFFL)
             {
-                fmt::snprintf(buf, sizeof(buf),
-                    "[PROCLUB] ERROR: Skills99 cave too far (dist=%lld)\r\n",
-                    (long long)dist);
-                log::debug(buf);
+                log::debugf(
+                    "[PROCLUB] ERROR: Skills99 cave too far (dist=%llX)\r\n",
+                    (unsigned long long)dist);
             }
             else
             {
                 g_skills99Cave  = (uintptr_t)cave;
                 g_skills99Ready = true;
-                fmt::snprintf(buf, sizeof(buf),
-                    "[PROCLUB] Skills99: hooksite=%p cave=%p dist=%lld\r\n",
-                    s, cave, (long long)dist);
-                log::debug(buf);
+                log::debugf(
+                    "[PROCLUB] Skills99: hooksite=%p cave=%p dist=%llX\r\n",
+                    s, cave, (unsigned long long)dist);
             }
         }
         else
@@ -138,19 +134,17 @@ bool proclub::Init(void* gameBase, unsigned long gameSize)
             intptr_t dist = (intptr_t)cave - (intptr_t)((unsigned char*)x + 8);
             if (dist > 0x7FFFFFFFL || dist < -(intptr_t)0x7FFFFFFFL)
             {
-                fmt::snprintf(buf, sizeof(buf),
-                    "[PROCLUB] ERROR: XPBoost cave too far (dist=%lld)\r\n",
-                    (long long)dist);
-                log::debug(buf);
+                log::debugf(
+                    "[PROCLUB] ERROR: XPBoost cave too far (dist=%llX)\r\n",
+                    (unsigned long long)dist);
             }
             else
             {
                 g_xpBoostCave  = (uintptr_t)cave;
                 g_xpBoostReady = true;
-                fmt::snprintf(buf, sizeof(buf),
-                    "[PROCLUB] XPBoost: hooksite=%p cave=%p dist=%lld\r\n",
-                    x, cave, (long long)dist);
-                log::debug(buf);
+                log::debugf(
+                    "[PROCLUB] XPBoost: hooksite=%p cave=%p dist=%llX\r\n",
+                    x, cave, (unsigned long long)dist);
             }
         }
         else
@@ -178,19 +172,17 @@ bool proclub::Init(void* gameBase, unsigned long gameSize)
             intptr_t dist = (intptr_t)cave - (intptr_t)((unsigned char*)t + 5);
             if (dist > 0x7FFFFFFFL || dist < -(intptr_t)0x7FFFFFFFL)
             {
-                fmt::snprintf(buf, sizeof(buf),
-                    "[PROCLUB] ERROR: Tourney cave too far (dist=%lld)\r\n",
-                    (long long)dist);
-                log::debug(buf);
+                log::debugf(
+                    "[PROCLUB] ERROR: Tourney cave too far (dist=%llX)\r\n",
+                    (unsigned long long)dist);
             }
             else
             {
                 g_tourneyCave = (uintptr_t)cave;
                 g_tournamentSpoofReady = true;
-                fmt::snprintf(buf, sizeof(buf),
-                    "[PROCLUB] Tourney: hooksite=%p cave=%p dist=%lld\r\n",
-                    t, cave, (long long)dist);
-                log::debug(buf);
+                log::debugf(
+                    "[PROCLUB] Tourney: hooksite=%p cave=%p dist=%llX\r\n",
+                    t, cave, (unsigned long long)dist);
             }
         }
         else
@@ -205,8 +197,6 @@ bool proclub::Init(void* gameBase, unsigned long gameSize)
 
 void proclub::Update()
 {
-    char buf[256];
-
     // --- Search Alone ---
     {
         static bool prev = false;
@@ -215,11 +205,10 @@ void proclub::Update()
             unsigned char byte = g_searchAlone ? 0x74 : 0x75;
             bool ok = game::ept_patch(g_searchAloneAddr, &byte, 1);
             prev = g_searchAlone;
-            fmt::snprintf(buf, sizeof(buf),
+            log::debugf(
                 "[PROCLUB] SearchAlone %s — wrote 0x%02X @%p (ok=%d)\r\n",
                 g_searchAlone ? "ON" : "OFF", byte,
                 (void*)g_searchAloneAddr, ok);
-            log::debug(buf);
         }
     }
 
@@ -245,12 +234,11 @@ void proclub::Update()
                 payload[9] = ((unsigned char*)&backRel)[2];
                 payload[10]= ((unsigned char*)&backRel)[3];
 
-                fmt::snprintf(buf, sizeof(buf),
+                log::debugf(
                     "[PROCLUB] Skills99 backRel=0x%08X fwd hooksite+5=%p cave+11=%p\r\n",
                     (unsigned int)backRel,
                     (void*)(g_skills99Hooksite + 5),
                     (void*)(g_skills99Cave + 11));
-                log::debug(buf);
                 log_bytes("Skills99 cave payload", g_skills99Cave, payload, 11);
 
                 bool ok = game::ept_patch(g_skills99Cave, payload, 11);
@@ -287,9 +275,8 @@ void proclub::Update()
                 log_bytes("Skills99 restore", g_skills99Hooksite, g_skills99OrigBytes, 5);
                 bool ok = game::ept_patch(g_skills99Hooksite, g_skills99OrigBytes, 5);
                 prevS = false;
-                fmt::snprintf(buf, sizeof(buf),
+                log::debugf(
                     "[PROCLUB] Skills99 OFF (ok=%d)\r\n", ok);
-                log::debug(buf);
             }
         }
     }
@@ -337,12 +324,11 @@ void proclub::Update()
                 payload[22] = ((unsigned char*)&backRel)[2];
                 payload[23] = ((unsigned char*)&backRel)[3];
 
-                fmt::snprintf(buf, sizeof(buf),
+                log::debugf(
                     "[PROCLUB] XPBoost backRel=0x%08X (hooksite+8=%p cave+24=%p)\r\n",
                     (unsigned int)backRel,
                     (void*)(g_xpBoostHooksite + 8),
                     (void*)(g_xpBoostCave + 24));
-                log::debug(buf);
                 log_bytes("XPBoost cave payload", g_xpBoostCave, payload, 24);
 
                 bool ok = game::ept_patch(g_xpBoostCave, payload, 24);
@@ -382,9 +368,8 @@ void proclub::Update()
                 log_bytes("XPBoost restore", g_xpBoostHooksite, g_xpBoostOrigBytes, 8);
                 bool ok = game::ept_patch(g_xpBoostHooksite, g_xpBoostOrigBytes, 8);
                 prevX = false;
-                fmt::snprintf(buf, sizeof(buf),
+                log::debugf(
                     "[PROCLUB] XPBoost OFF (ok=%d)\r\n", ok);
-                log::debug(buf);
             }
         }
     }
@@ -423,12 +408,11 @@ void proclub::Update()
                 payload[15] = ((unsigned char*)&backRel)[2];
                 payload[16] = ((unsigned char*)&backRel)[3];
 
-                fmt::snprintf(buf, sizeof(buf),
+                log::debugf(
                     "[PROCLUB] Tourney backRel=0x%08X (hooksite+5=%p cave+17=%p)\r\n",
                     (unsigned int)backRel,
                     (void*)(g_tourneyHooksite + 5),
                     (void*)(g_tourneyCave + 17));
-                log::debug(buf);
                 log_bytes("Tourney cave payload", g_tourneyCave, payload, 17);
 
                 bool ok = game::ept_patch(g_tourneyCave, payload, 17);
@@ -465,9 +449,8 @@ void proclub::Update()
                 log_bytes("Tourney restore", g_tourneyHooksite, g_tourneyOrigBytes, 5);
                 bool ok = game::ept_patch(g_tourneyHooksite, g_tourneyOrigBytes, 5);
                 prevT = false;
-                fmt::snprintf(buf, sizeof(buf),
+                log::debugf(
                     "[PROCLUB] TournamentSpoof OFF (ok=%d)\r\n", ok);
-                log::debug(buf);
             }
         }
     }

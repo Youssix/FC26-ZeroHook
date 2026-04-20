@@ -57,7 +57,6 @@ namespace
 
 bool sliders::InitOffsets(void* gameBase, unsigned long gameSize)
 {
-    char buf[128];
     log::debug("[SLIDERS] Scanning patterns...\r\n");
 
     // 1. slider_buffer_fnc
@@ -65,8 +64,7 @@ bool sliders::InitOffsets(void* gameBase, unsigned long gameSize)
         "40 53 48 83 EC ? 33 D2 41 B8 ? ? ? ? 48 8B D9 E8 ? ? ? ? B9 ? ? ? ? 48 8D 43");
     if (m1) {
         slider_buffer_fnc = (uintptr_t)m1;
-        fmt::snprintf(buf, sizeof(buf), "[SLIDERS] slider_buffer_fnc: %p\r\n", (void*)slider_buffer_fnc);
-        log::debug(buf);
+        log::debugf("[SLIDERS] slider_buffer_fnc: %p\r\n", (void*)slider_buffer_fnc);
     } else {
         log::debug("[SLIDERS] ERROR: slider_buffer_fnc not found\r\n");
     }
@@ -76,15 +74,13 @@ bool sliders::InitOffsets(void* gameBase, unsigned long gameSize)
         "48 8B 05 ? ? ? ? 48 85 C0 0F 85 ? ? ? ? 48 89 0D");
     if (m2) {
         InGameDB = resolve_rip3_7((uintptr_t)m2);
-        fmt::snprintf(buf, sizeof(buf), "[SLIDERS] InGameDB: %p\r\n", (void*)InGameDB);
-        log::debug(buf);
+        log::debugf("[SLIDERS] InGameDB: %p\r\n", (void*)InGameDB);
     } else {
         log::debug("[SLIDERS] ERROR: InGameDB not found\r\n");
     }
 
     bool ok = slider_buffer_fnc && InGameDB;
-    fmt::snprintf(buf, sizeof(buf), "[SLIDERS] InitOffsets: %s\r\n", ok ? "ALL OK" : "SOME MISSING");
-    log::debug(buf);
+    log::debugf("[SLIDERS] InitOffsets: %s\r\n", ok ? "ALL OK" : "SOME MISSING");
     return ok;
 }
 

@@ -124,11 +124,9 @@ extern "C" unsigned long long StateMachineDetour(
     typedef char(__fastcall* enter_fn_t)(uintptr_t, __int64, __int64);
     auto enter_fn = reinterpret_cast<enter_fn_t>(enter_addr);
 
-    char b[192];
-    fmt::snprintf(b, sizeof(b),
+    log::debugf(
         "[ForceStateEnter] firing sub_1427FA200(%p, 0, 0) once per match (ctx=%p, state_root=%p)\r\n",
         (void*)matchCtx, (void*)matchCtx, (void*)a1);
-    log::debug(b);
 
     __try { enter_fn(matchCtx, 0, 0); }
     __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -149,11 +147,9 @@ void ai_control::ApplyForceAfkPath(bool enable)
         {
             g_forceAfkPathInstalled = true;
             g_forceAfkPath          = true;
-            char b[128];
-            fmt::snprintf(b, sizeof(b),
+            log::debugf(
                 "[ForceAfkPath] ON  — ept_patch %p: 74 1B -> 90 90\r\n",
                 (void*)addr);
-            log::debug(b);
             toast::Show(toast::Type::Success, "Force AFK Path: ON");
         }
         else
@@ -169,11 +165,9 @@ void ai_control::ApplyForceAfkPath(bool enable)
         {
             g_forceAfkPathInstalled = false;
             g_forceAfkPath          = false;
-            char b[128];
-            fmt::snprintf(b, sizeof(b),
+            log::debugf(
                 "[ForceAfkPath] OFF — ept_patch %p: 90 90 -> 74 1B\r\n",
                 (void*)addr);
-            log::debug(b);
             toast::Show(toast::Type::Info, "Force AFK Path: OFF");
         }
         else
@@ -250,11 +244,9 @@ void ai_control::OnIncomingControlOpcode(uint32_t team, uint32_t player)
     g_ourPlayerId      = player;
     g_playerIdCaptured = true;
 
-    char buf[128];
-    fmt::snprintf(buf, sizeof(buf),
+    log::debugf(
         "[AI] captured ourPlayerId=%u (team=%u, playerside=%d)\r\n",
         player, team, sliders::playerside);
-    log::debug(buf);
 }
 
 namespace
@@ -377,11 +369,9 @@ namespace
         uint32_t prevCtrl = 0;
         bool localOk = WriteLocalAiMarker(ctx, field_slot, prevCtrl);
 
-        char buf[192];
-        fmt::snprintf(buf, sizeof(buf),
+        log::debugf(
             "[AI] %s field_slot=%u prevCtrl=%08X localOk=%d (LOCAL-ONLY, no broadcast)\r\n",
             label, field_slot, prevCtrl, localOk ? 1 : 0);
-        log::debug(buf);
         return localOk;
     }
 
@@ -449,10 +439,8 @@ namespace
             mySide = *reinterpret_cast<uint32_t*>(ctx + 0x23D4);
         } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
         if (mySide != 0 && mySide != 1) {
-            char buf[128];
-            fmt::snprintf(buf, sizeof(buf),
+            log::debugf(
                 "[AI] %s mySide=%u out of range — abort\r\n", label, mySide);
-            log::debug(buf);
             return false;
         }
 
@@ -481,11 +469,9 @@ namespace
             (*reinterpret_cast<uint32_t*>(ctx + 0x2550)) += 1;
         } __except (EXCEPTION_EXECUTE_HANDLER) { ++crashes; }
 
-        char buf[192];
-        fmt::snprintf(buf, sizeof(buf),
+        log::debugf(
             "[AI] %s mySide=%u hits=%u crashes=%u (OptionA matchData-local)\r\n",
             label, mySide, hits, crashes);
-        log::debug(buf);
 
         return hits > 0 && crashes == 0;
     }
@@ -577,11 +563,9 @@ bool ai_control::SendAiTakeover()
         } __except (EXCEPTION_EXECUTE_HANDLER) {}
     }
 
-    char lb[192];
-    fmt::snprintf(lb, sizeof(lb),
+    log::debugf(
         "[AI] takeover-self PRE-KICKOFF mySide=%u fn_sent=%d fn_threw=%d direct_wrote=%d\r\n",
         mySide, sent, threw, wrote);
-    log::debug(lb);
 
     if (sent == 0 && wrote == 0) {
         toast::Show(toast::Type::Error, "AI: takeover did nothing");
@@ -684,11 +668,9 @@ bool ai_control::SendDisableOpponentAi()
     }
     hook::g_allow_attack_send = false;
 
-    char lb[192];
-    fmt::snprintf(lb, sizeof(lb),
+    log::debugf(
         "[AI] RosterSpoof: 0xFAE6B64D oppSide=%u mySide=%u sent=%d threw=%d\r\n",
         oppSide, mySide, sent, threw);
-    log::debug(lb);
 
     if (sent == 11 && threw == 0) {
         g_rosterSpoofFired = true;
@@ -729,11 +711,9 @@ bool ai_control::FireAiHeartbeat()
     }
     hook::g_allow_attack_send = false;
 
-    char b[128];
-    fmt::snprintf(b, sizeof(b),
+    log::debugf(
         "[AI] FireAiHeartbeat: opcode=0xE81D3B4C sz=12 buf={0,0,1} ok=%d\r\n",
         ok ? 1 : 0);
-    log::debug(b);
 
     if (ok) toast::Show(toast::Type::Success, "Heartbeat 0xE81D3B4C sent");
     else    toast::Show(toast::Type::Error, "Heartbeat send threw");
@@ -770,11 +750,9 @@ bool ai_control::FireAiInputAnnounce()
     }
     hook::g_allow_attack_send = false;
 
-    char b[128];
-    fmt::snprintf(b, sizeof(b),
+    log::debugf(
         "[AI] FireAiInputAnnounce: opcode=0xE81D3B4C sz=12 buf={1.0f,1.0f,1} ok=%d\r\n",
         ok ? 1 : 0);
-    log::debug(b);
 
     if (ok) toast::Show(toast::Type::Success, "InputAnnounce 0xE81D3B4C sent");
     else    toast::Show(toast::Type::Error, "InputAnnounce send threw");
@@ -803,10 +781,8 @@ namespace
         uintptr_t rcx = 0;
         rage::dispatch_fn_t fn = nullptr;
         if (!rage::get_dispatch(rcx, fn)) {
-            char b[96];
-            fmt::snprintf(b, sizeof(b),
+            log::debugf(
                 "[AI] %s: get_dispatch failed\r\n", tag);
-            log::debug(b);
             toast::Show(toast::Type::Error, "A2CB: dispatcher unavailable");
             return false;
         }
@@ -826,11 +802,9 @@ namespace
         }
         hook::g_allow_attack_send = false;
 
-        char b[192];
-        fmt::snprintf(b, sizeof(b),
+        log::debugf(
             "[AI] %s: A2CB726E {%08X,%u,0} slot=0xFF param7=0 ok=%d\r\n",
             tag, team, fieldSlot, ok ? 1 : 0);
-        log::debug(b);
 
         if (ok) toast::Show(toast::Type::Success, tag);
         else    toast::Show(toast::Type::Error, "A2CB send threw");
@@ -906,11 +880,9 @@ bool ai_control::ClaimMySlot()
     }
     hook::g_allow_attack_send = false;
 
-    char b[192];
-    fmt::snprintf(b, sizeof(b),
+    log::debugf(
         "[AI] ClaimMySlot: sub_14281B970(ctx=%p, {team=%u, player=%u}) ok=%d\r\n",
         (void*)ctx, team_player[0], team_player[1], ok ? 1 : 0);
-    log::debug(b);
 
     if (ok) toast::Show(toast::Type::Success, "ClaimMySlot fired");
     else    toast::Show(toast::Type::Error, "ClaimMySlot threw");
@@ -947,11 +919,9 @@ bool ai_control::CallFnAfkTakeover()
     }
     hook::g_allow_attack_send = false;
 
-    char b[160];
-    fmt::snprintf(b, sizeof(b),
+    log::debugf(
         "[AI] CallFnAfkTakeover(matchCtx=%p, slot=%u, 0, 1) ok=%d\r\n",
         (void*)ctx, slot, ok ? 1 : 0);
-    log::debug(b);
 
     if (ok) toast::Show(toast::Type::Success, "FnAfkTakeover called");
     else    toast::Show(toast::Type::Error, "FnAfkTakeover threw");
@@ -985,10 +955,8 @@ bool ai_control::FireA2CBFullSweep()
     }
     hook::g_allow_attack_send = false;
 
-    char b[160];
-    fmt::snprintf(b, sizeof(b),
+    log::debugf(
         "[AI] A2CB sweep: 22 slots, sent=%d threw=%d\r\n", sent, threw);
-    log::debug(b);
 
     toast::Show(sent > 0 ? toast::Type::Success : toast::Type::Error,
                 "A2CB 22-sweep fired");

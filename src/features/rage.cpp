@@ -66,7 +66,6 @@ bool rage::get_dispatch(uintptr_t& outRcx, dispatch_fn_t& outFn)
 // ── Pattern scan init ───────────────────────────────────────────────
 bool rage::InitOffsets(void* gameBase, unsigned long gameSize)
 {
-    char buf[128];
     log::debug("[RAGE] Scanning patterns...\r\n");
 
     // 1. slider_ptr
@@ -74,8 +73,7 @@ bool rage::InitOffsets(void* gameBase, unsigned long gameSize)
         "48 8B 0D ? ? ? ? 48 0F 44 C8 E9 ? ? ? ? CC CC CC CC CC CC");
     if (m1) {
         slider_ptr = resolve_rip3_7((uintptr_t)m1);
-        fmt::snprintf(buf, sizeof(buf), "[RAGE] slider_ptr: %p\r\n", (void*)slider_ptr);
-        log::debug(buf);
+        log::debugf("[RAGE] slider_ptr: %p\r\n", (void*)slider_ptr);
     } else {
         log::debug("[RAGE] ERROR: slider_ptr not found\r\n");
     }
@@ -85,8 +83,7 @@ bool rage::InitOffsets(void* gameBase, unsigned long gameSize)
         "48 8B 05 ? ? ? ? C3 CC CC CC CC CC CC CC CC 48 8B 05 ? ? ? ? 48 8B 15");
     if (m2) {
         msg_dispatcher = resolve_rip3_7((uintptr_t)m2);
-        fmt::snprintf(buf, sizeof(buf), "[RAGE] msg_dispatcher: %p\r\n", (void*)msg_dispatcher);
-        log::debug(buf);
+        log::debugf("[RAGE] msg_dispatcher: %p\r\n", (void*)msg_dispatcher);
     } else {
         log::debug("[RAGE] ERROR: msg_dispatcher not found\r\n");
     }
@@ -97,8 +94,7 @@ bool rage::InitOffsets(void* gameBase, unsigned long gameSize)
     // call time via msg_dispatcher chain, which is what the game itself does.
 
     bool ok = slider_ptr && msg_dispatcher;
-    fmt::snprintf(buf, sizeof(buf), "[RAGE] InitOffsets: %s\r\n", ok ? "ALL OK" : "SOME MISSING");
-    log::debug(buf);
+    log::debugf("[RAGE] InitOffsets: %s\r\n", ok ? "ALL OK" : "SOME MISSING");
     return ok;
 }
 
@@ -106,13 +102,11 @@ bool rage::InitOffsets(void* gameBase, unsigned long gameSize)
 // ── crash_opps ──────────────────────────────────────────────────────
 void rage::crash_opps()
 {
-    char buf[256];
     log::debug("[RAGE] crash_opps: ENTER\r\n");
 
-    fmt::snprintf(buf, sizeof(buf),
+    log::debugf(
         "[RAGE] crash_opps: msg_dispatcher=%p\r\n",
         (void*)rage::msg_dispatcher);
-    log::debug(buf);
 
     uintptr_t rcx = 0; rage::dispatch_fn_t fn = nullptr;
     if (!rage::get_dispatch(rcx, fn)) {
@@ -121,9 +115,8 @@ void rage::crash_opps()
         return;
     }
 
-    fmt::snprintf(buf, sizeof(buf),
+    log::debugf(
         "[RAGE] crash_opps: rcx=%p fn=%p\r\n", (void*)rcx, (void*)fn);
-    log::debug(buf);
 
     uint64_t v32 = 0x75879024;
     int v33 = 0x90;
@@ -142,9 +135,8 @@ void rage::crash_opps()
     __except (EXCEPTION_EXECUTE_HANDLER) {
         hook::g_allow_attack_send = false;
         DWORD code = GetExceptionCode();
-        fmt::snprintf(buf, sizeof(buf),
+        log::debugf(
             "[RAGE] crash_opps: EXCEPTION 0x%08X — offsets are stale, game updated\r\n", code);
-        log::debug(buf);
         toast::Show(toast::Type::Error, "Crash opps failed (game updated?)");
     }
 }
@@ -174,10 +166,8 @@ void rage::pause_op_game()
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
         hook::g_allow_attack_send = false;
-        char buf[128];
-        fmt::snprintf(buf, sizeof(buf),
+        log::debugf(
             "[RAGE] pause_op_game: EXCEPTION 0x%08X\r\n", GetExceptionCode());
-        log::debug(buf);
         toast::Show(toast::Type::Error, "Freeze 1 failed");
     }
 }
@@ -206,10 +196,8 @@ void rage::pause_op_game_new()
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
         hook::g_allow_attack_send = false;
-        char buf[128];
-        fmt::snprintf(buf, sizeof(buf),
+        log::debugf(
             "[RAGE] pause_op_game_new: EXCEPTION 0x%08X\r\n", GetExceptionCode());
-        log::debug(buf);
         toast::Show(toast::Type::Error, "Freeze 2 failed");
     }
 }
@@ -258,10 +246,8 @@ void rage::slider_bomb()
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
         hook::g_allow_attack_send = false;
-        char buf[128];
-        fmt::snprintf(buf, sizeof(buf),
+        log::debugf(
             "[RAGE] slider_bomb: EXCEPTION 0x%08X\r\n", GetExceptionCode());
-        log::debug(buf);
         toast::Show(toast::Type::Error, "Slider Bomb failed");
     }
 }
@@ -299,7 +285,5 @@ void rage::kick_opponent(int dcReason)
 
     toast::Show(toast::Type::Success, "Kick sent to opponent");
 
-    char buf[80];
-    fmt::snprintf(buf, sizeof(buf), "[RAGE] kick_opponent sent (reason=%d)\r\n", dcReason);
-    log::debug(buf);
+    log::debugf("[RAGE] kick_opponent sent (reason=%d)\r\n", dcReason);
 }

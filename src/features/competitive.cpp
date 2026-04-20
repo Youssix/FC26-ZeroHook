@@ -95,7 +95,6 @@ namespace
 
 bool competitive::Init(void* gameBase, unsigned long gameSize)
 {
-    char buf[256];
     initialized = false;
 
     if (!gameBase || !gameSize) {
@@ -114,8 +113,7 @@ bool competitive::Init(void* gameBase, unsigned long gameSize)
     }
 
     g_checkerAddr = (uintptr_t)match;
-    fmt::snprintf(buf, sizeof(buf), "[COMP] Checker function: %p\r\n", (void*)g_checkerAddr);
-    log::to_file(buf);
+    log::debugf("[COMP] Checker function: %p\r\n", (void*)g_checkerAddr);
 
     // 2. Find the vtable entry in .rdata that points to checker
     g_vtableSlotAddr = FindVtableEntry(gameBase, gameSize, g_checkerAddr);
@@ -124,8 +122,7 @@ bool competitive::Init(void* gameBase, unsigned long gameSize)
         return false;
     }
 
-    fmt::snprintf(buf, sizeof(buf), "[COMP] Vtable slot: %p\r\n", (void*)g_vtableSlotAddr);
-    log::to_file(buf);
+    log::debugf("[COMP] Vtable slot: %p\r\n", (void*)g_vtableSlotAddr);
 
     // Save original value
     g_originalValue = (unsigned long long)g_checkerAddr;
@@ -137,8 +134,7 @@ bool competitive::Init(void* gameBase, unsigned long gameSize)
         return false;
     }
 
-    fmt::snprintf(buf, sizeof(buf), "[COMP] Gadget (ret 0): %p\r\n", (void*)g_gadgetAddr);
-    log::to_file(buf);
+    log::debugf("[COMP] Gadget (ret 0): %p\r\n", (void*)g_gadgetAddr);
 
     initialized = true;
     g_swapped = false;
@@ -154,8 +150,6 @@ bool competitive::IsReady()
 void competitive::SetEnabled(bool enable)
 {
     if (!initialized) return;
-
-    char buf[256];
 
     if (enable && !g_swapped)
     {
@@ -173,8 +167,7 @@ void competitive::SetEnabled(bool enable)
             toast::Show(toast::Type::Success, "Competitive settings unlocked");
             log::to_file("[COMP] Enabled: vtable swapped to gadget\r\n");
         } else {
-            fmt::snprintf(buf, sizeof(buf), "[COMP] ERROR: write failed (status=%u)\r\n", req.status);
-            log::to_file(buf);
+            log::debugf("[COMP] ERROR: write failed (status=%u)\r\n", req.status);
             unlockEnabled = false;
             toast::Show(toast::Type::Error, "Competitive unlock failed");
         }
@@ -195,8 +188,7 @@ void competitive::SetEnabled(bool enable)
             toast::Show(toast::Type::Info, "Competitive settings restored");
             log::to_file("[COMP] Disabled: vtable restored\r\n");
         } else {
-            fmt::snprintf(buf, sizeof(buf), "[COMP] ERROR: restore failed (status=%u)\r\n", req.status);
-            log::to_file(buf);
+            log::debugf("[COMP] ERROR: restore failed (status=%u)\r\n", req.status);
             unlockEnabled = true;
             toast::Show(toast::Type::Error, "Competitive restore failed");
         }

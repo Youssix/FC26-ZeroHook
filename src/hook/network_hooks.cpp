@@ -86,7 +86,7 @@ namespace
         // Filters out the 4 per-tick framing opcodes (~94% of traffic):
         //   0x5D4D4E4C  ball/score  0x38789943  timer sync
         //   0x90F87271  physics     0x8CD19B0C  heartbeat
-        if (settings::g_traceOpcodes)
+        if (g_debugLog && settings::g_traceOpcodes)
         {
             unsigned int op_noise = *a2;
             bool is_noise =
@@ -344,11 +344,13 @@ extern "C" unsigned long long HookedMatchTimer(
     if (tl_matchTimerDepth != 0)
     {
         g_matchTimerReentryCount++;
-        char rb[96];
-        fmt::snprintf(rb, sizeof(rb),
-            "matchtimer:REENTRY depth=%u total=%llu",
-            tl_matchTimerDepth, (unsigned long long)g_matchTimerReentryCount);
-        breadcrumb::set(rb);
+        if (g_debugLog) {
+            char rb[96];
+            fmt::snprintf(rb, sizeof(rb),
+                "matchtimer:REENTRY depth=%u total=%llu",
+                tl_matchTimerDepth, (unsigned long long)g_matchTimerReentryCount);
+            breadcrumb::set(rb);
+        }
         return 0;  // pass through, touch nothing else
     }
     tl_matchTimerDepth = 1;
@@ -360,11 +362,9 @@ extern "C" unsigned long long HookedMatchTimer(
     unsigned long long tick = ++g_matchTimerTickCount;
     if ((tick % 600) == 1)
     {
-        char hb[128];
-        fmt::snprintf(hb, sizeof(hb),
+        log::debugf(
             "[MatchTimer] heartbeat tick=%llu tid=%u\r\n",
             tick, (unsigned)GetCurrentThreadId());
-        log::debug(hb);
     }
 
     __try {
@@ -381,11 +381,11 @@ extern "C" unsigned long long HookedMatchTimer(
             // this is exactly where affected clients freeze.
             breadcrumb::set("matchtimer:kickoff_enter");
 
-            char kb[160];
-            fmt::snprintf(kb, sizeof(kb),
-                "[MatchTimer] KICKOFF tid=%u tick=%llu prev=%.4f cur=%.4f\r\n",
-                (unsigned)GetCurrentThreadId(), tick, prev_time, current_time);
-            log::debug(kb);
+            // NOTE: %.4f is not supported by fmt::vsnprintf; fall back to raw bits
+            log::debugf(
+                "[MatchTimer] KICKOFF tid=%u tick=%llu prev_bits=0x%08X cur_bits=0x%08X\r\n",
+                (unsigned)GetCurrentThreadId(), tick,
+                *(unsigned int*)&prev_time, *(unsigned int*)&current_time);
 
             ai_control::ResetCapture();  // next 0xA2CB726E broadcast refreshes ourPlayerId
 
@@ -436,8 +436,6 @@ extern "C" unsigned long long HookedMatchTimer(
 
 void hook::install_match_timer_hook()
 {
-    char buf[512];
-
     if (!offsets::FnMatchTimer)
     {
         log::debug("[ZeroHook] WARNING: MatchTimer not found, AI difficulty trigger disabled\r\n");
@@ -458,12 +456,11 @@ void hook::install_match_timer_hook()
     bool fnInModule    = (fnAddr >= gameBase && fnAddr < gameEnd);
     bool vtInModule    = (vtAddr >= gameBase && vtAddr < gameEnd);
 
-    fmt::snprintf(buf, sizeof(buf),
+    log::debugf(
         "[MatchTimer] vtable=%p (inModule=%d) FnMatchTimer=%p (inModule=%d) gameBase=%p size=0x%lX\r\n",
         (void*)vtAddr, vtInModule ? 1 : 0,
         (void*)fnAddr, fnInModule ? 1 : 0,
         (void*)gameBase, offsets::GameSize);
-    log::debug(buf);
 
     // Prologue bytes — 32 bytes. If this looks nothing like a normal
     // function prologue (no push rbp / sub rsp / mov rax,... / push rbx),
@@ -480,11 +477,14 @@ void hook::install_match_timer_hook()
             return;
         }
 
-        int pos = fmt::snprintf(buf, sizeof(buf), "[MatchTimer] prologue:");
-        for (int i = 0; i < 32 && pos + 4 < (int)sizeof(buf); i++)
-            pos += fmt::snprintf(buf + pos, sizeof(buf) - pos, " %02X", prologue[i]);
-        pos += fmt::snprintf(buf + pos, sizeof(buf) - pos, "\r\n");
-        log::debug(buf);
+        if (g_debugLog) {
+            char buf[512];
+            int pos = fmt::snprintf(buf, sizeof(buf), "[MatchTimer] prologue:");
+            for (int i = 0; i < 32 && pos + 4 < (int)sizeof(buf); i++)
+                pos += fmt::snprintf(buf + pos, sizeof(buf) - pos, " %02X", prologue[i]);
+            pos += fmt::snprintf(buf + pos, sizeof(buf) - pos, "\r\n");
+            log::debug(buf);
+        }
     }
     else
     {
@@ -497,9 +497,8 @@ void hook::install_match_timer_hook()
     bool ok = ept::install_hook(g_matchTimerHookParams,
         (unsigned char*)offsets::FnMatchTimer,
         (void*)&HookedMatchTimer, "MatchTimer");
-    fmt::snprintf(buf, sizeof(buf),
+    log::debugf(
         "[ZeroHook] MatchTimer hook install returned %d\r\n", ok ? 1 : 0);
-    log::debug(buf);
     breadcrumb::set(ok ? "matchtimer:install_ok" : "matchtimer:install_FAILED");
 }
 
@@ -514,7 +513,6 @@ void hook::install_playerside_hook()
         return;
     }
 
-    char buf[256];
     unsigned char* target = (unsigned char*)offsets::FnPlayerSide;
 
     // Follow E9/NOP chain, find the LAST thunk before the real (VMProtect'd) function
@@ -558,9 +556,8 @@ void hook::install_playerside_hook()
         return;
     }
 
-    fmt::snprintf(buf, sizeof(buf), "[ZeroHook] PlayerSide patchE9=%p originalTarget=%p\r\n",
+    log::debugf("[ZeroHook] PlayerSide patchE9=%p originalTarget=%p\r\n",
         patchE9, (void*)originalTarget);
-    log::debug(buf);
 
     // Find a code cave (14+ padding bytes) within the game module
     unsigned char* cave = (unsigned char*)game::find_code_cave(
@@ -579,9 +576,8 @@ void hook::install_playerside_hook()
         return;
     }
 
-    fmt::snprintf(buf, sizeof(buf), "[ZeroHook] PlayerSide cave=%p dist=%lld\r\n",
-        cave, (long long)caveDist);
-    log::debug(buf);
+    log::debugf("[ZeroHook] PlayerSide cave=%p dist=%llX\r\n",
+        cave, (unsigned long long)caveDist);
 
     // Build 12-byte trampoline: mov rax, <hook>; jmp rax
     unsigned long long hookAddr = (unsigned long long)&HookedPlayerSide;

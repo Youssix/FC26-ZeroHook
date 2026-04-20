@@ -1,6 +1,50 @@
 #pragma once
 #include <cstdint>
 
+// ─────────────────────────────────────────────────────────────────────────
+//  OPCODE MAP (for this project — full inventory in memory/opcode_inventory.md)
+// ─────────────────────────────────────────────────────────────────────────
+//
+//  CONTROLLER / ROSTER ────────────────────────────────────────────────────
+//    0xA2CB726E  — Controller Reassign (sz=12, {team,slot,0}). Peer-gated
+//                  by sub_142825AC0 owner-check. Our sends via spoof_call
+//                  trigger DataMismatch for non-owned slots (patched FIFA23+).
+//    0xFAE6B64D  — "Player in Lobby" roster entry (sz=0x38). OLD forged
+//                  method used by SendDisableOpponentAi() — patched.
+//    0x8B6ADB85  — Controller-Assign NAK (sz=8). Emitted by sub_14281B970
+//                  on claim-failure.
+//    0x0FAC4147  — PLAYER_RELEASED (sz=8). Sibling of ClaimSlot in
+//                  sub_14281BEE0 (Release/Leave).
+//    0x817F6893  — Ack/Reference (sz=0x18). Tail of sub_14281A4F0.
+//    0xB903E184  — Ack companion to 0x817F6893.
+//
+//  AFK / IDLE ─────────────────────────────────────────────────────────────
+//    0xA76FB4ED  — AFK countdown (sz=4). FnAfkTakeover periodic.
+//    0xA53EAAB2  — "Not Actively Playing" UI banner (sz=0x24). Cosmetic.
+//    0x4E9507C9  — HLI 22-slot state sync (sz=0x290 = 656). sub_14282B1D0.
+//
+//  HOST STATE / LOBBY CLASS ───────────────────────────────────────────────
+//    0x999C804A  — HostFullStateBroadcast envelope (sz=0x15D0 = 5584).
+//                  Arms peer gate matchCtx+0x120=1 via sub_142825AC0.
+//    0x10C4BF57  — Alternate arm (same effect as 0x999C804A).
+//    0xE0A38D91  — Disarm (matchCtx+0x120=0).
+//    0xEEA05BB1  — Router cmd that triggers sub_14218F5D0 broadcast.
+//    0xDEAA09DC  — Match teardown router cmd.
+//
+//  AI DRIVER (LOCAL-ONLY, no peer subscriber) ─────────────────────────────
+//    0xE81D3B4C  — AI Input Announce (sz=12). sub_148C3FC40.
+//    0x4837B24B  — AI Cue/Difficulty (sz=12). sub_148C3C410. 10/match.
+//    0x3BF3282E  — AI state-delta companion to 0x4837B24B (sz=8).
+//
+//  STATUS: raw forging is PATCHED since FIFA 23 (Kresor confirmed via
+//  Discord). Working path is "send a class" via the Frostbite service
+//  locator sub_145094BE0("online") + vtbl[0x48], OR the class-method
+//  takeover sub_142814510 via fifaBaseServices::Aardvark singleton.
+//
+//  See memory/opcode_inventory.md for full detail including senders,
+//  receivers, addresses, class hashes, and config keys.
+// ─────────────────────────────────────────────────────────────────────────
+
 // AI vs Opps / Disable Opponent AI — based on the proven-working commit
 // dd7b1f3 of FC26-Internal. The "cheater signature" is 4 consecutive
 // identical 0xA2CB726E packets sent after the game's own 44-packet match
@@ -15,6 +59,10 @@
 // ourPlayerId is harvested from incoming 0xA2CB726E traffic during match
 // setup by the RouteGameMessage hook: when a packet's buf[0] (team) matches
 // sliders::playerside, we capture buf[1] as ourPlayerId. Reset each match.
+//
+// HISTORICAL: this 4-packet recipe is the OLD method. Patched since FIFA
+// 23. New method = class-send path via sub_142814510 / sub_142814760 /
+// sub_148563CF0. See opcode map above + memory/opcode_inventory.md.
 namespace ai_control
 {
     // Captured from incoming 0xA2CB726E traffic during match setup.

@@ -115,8 +115,6 @@ namespace
     // Returns raw int (0x1E = FUT Champions, 0x22 = Rivals, etc.) or -1 on failure.
     int getMatchType()
     {
-        char buf[192];
-
         if (!g_testfuncMatch || !g_matchTypeMagic) {
             log::debug("[OPP] getMatchType: testfuncMatch or magic not set\r\n");
             return -1;
@@ -136,11 +134,9 @@ namespace
             typedef __int64(__fastcall* FnType)(uint64_t, uint32_t);
             auto fn = reinterpret_cast<FnType>(fnAddr);
 
-            fmt::snprintf(buf, sizeof(buf), "[OPP] getMatchType: CALL1 fn=%p rcx=%p edx=0x0EBDBBE3\r\n", (void*)fnAddr, (void*)basePtr);
-            log::to_file(buf);
+            log::debugf("[OPP] getMatchType: CALL1 fn=%p rcx=%p edx=0x0EBDBBE3\r\n", (void*)fnAddr, (void*)basePtr);
             __int64 v3 = spoof_call(fn, (uint64_t)basePtr, (uint32_t)0x0EBDBBE3);
-            fmt::snprintf(buf, sizeof(buf), "[OPP] getMatchType: CALL1 returned v3=%p\r\n", (void*)v3);
-            log::to_file(buf);
+            log::debugf("[OPP] getMatchType: CALL1 returned v3=%p\r\n", (void*)v3);
             if (!is_valid_ptr((uintptr_t)v3)) { log::to_file("[OPP] BAIL getMatchType: v3 bad\r\n"); return -1; }
 
             uint64_t v3_vtbl = *(uint64_t*)v3;
@@ -150,11 +146,9 @@ namespace
             if (!is_valid_ptr(fnAddr2)) { log::to_file("[OPP] BAIL getMatchType: fnAddr2 bad\r\n"); return -1; }
 
             auto call2 = reinterpret_cast<FnType>(fnAddr2);
-            fmt::snprintf(buf, sizeof(buf), "[OPP] getMatchType: CALL2 fn=%p rcx=%p edx=0x0EBDBBE4\r\n", (void*)fnAddr2, (void*)v3);
-            log::to_file(buf);
+            log::debugf("[OPP] getMatchType: CALL2 fn=%p rcx=%p edx=0x0EBDBBE4\r\n", (void*)fnAddr2, (void*)v3);
             __int64 v4 = spoof_call(call2, (uint64_t)v3, (uint32_t)0x0EBDBBE4);
-            fmt::snprintf(buf, sizeof(buf), "[OPP] getMatchType: CALL2 returned v4=%p\r\n", (void*)v4);
-            log::to_file(buf);
+            log::debugf("[OPP] getMatchType: CALL2 returned v4=%p\r\n", (void*)v4);
             if (!is_valid_ptr((uintptr_t)v4)) { log::to_file("[OPP] BAIL getMatchType: v4 bad\r\n"); return -1; }
 
             uint64_t v4_vtbl = *(uint64_t*)v4;
@@ -169,12 +163,10 @@ namespace
             auto fn3 = reinterpret_cast<Fn3Type>(fnAddr3);
 
             unsigned int result = 0;
-            fmt::snprintf(buf, sizeof(buf), "[OPP] getMatchType: CALL3 fn=%p rcx=%p edx=0x%X r8=&result\r\n",
+            log::debugf("[OPP] getMatchType: CALL3 fn=%p rcx=%p edx=0x%X r8=&result\r\n",
                 (void*)fnAddr3, (void*)v4, g_matchTypeMagic);
-            log::to_file(buf);
             spoof_call(fn3, (uint64_t)v4, (uint32_t)g_matchTypeMagic, &result);
-            fmt::snprintf(buf, sizeof(buf), "[OPP] getMatchType: CALL3 returned, result=%d (0x%X)\r\n", result, result);
-            log::to_file(buf);
+            log::debugf("[OPP] getMatchType: CALL3 returned, result=%d (0x%X)\r\n", result, result);
 
             // Release v4 only if it's a NEW object (v4 != v3).
             // When vtable+0x18 returns the same ptr, no AddRef was done — releasing would over-decrement.
@@ -182,8 +174,7 @@ namespace
                 uint64_t relFn = *(uint64_t*)(v4_vtbl + 0x8);
                 if (is_valid_ptr(relFn)) {
                     typedef void(__fastcall* ReleaseFn)(__int64);
-                    fmt::snprintf(buf, sizeof(buf), "[OPP] getMatchType: RELEASE fn=%p rcx=%p (v4!=v3)\r\n", (void*)relFn, (void*)v4);
-                    log::to_file(buf);
+                    log::debugf("[OPP] getMatchType: RELEASE fn=%p rcx=%p (v4!=v3)\r\n", (void*)relFn, (void*)v4);
                     spoof_call(reinterpret_cast<ReleaseFn>(relFn), (__int64)v4);
                     log::to_file("[OPP] getMatchType: RELEASE done\r\n");
                 }
@@ -191,8 +182,7 @@ namespace
                 log::to_file("[OPP] getMatchType: SKIP release (v4==v3, no AddRef)\r\n");
             }
 
-            fmt::snprintf(buf, sizeof(buf), "[OPP] getMatchType: DONE result=%d (0x%X)\r\n", result, result);
-            log::to_file(buf);
+            log::debugf("[OPP] getMatchType: DONE result=%d (0x%X)\r\n", result, result);
 
             return (int)result;
         }
@@ -218,9 +208,7 @@ namespace
             return 0;
         }
 
-        char buf[128];
-        fmt::snprintf(buf, sizeof(buf), "[OPP] get_object_result: func2 returned %p\r\n", (void*)obj);
-        log::debug(buf);
+        log::debugf("[OPP] get_object_result: func2 returned %p\r\n", (void*)obj);
 
         if (!obj) { log::to_file("[OPP] BAIL: func2 returned NULL\r\n"); return 0; }
 
@@ -232,15 +220,13 @@ namespace
             uintptr_t fnAddr = *(uintptr_t*)(vtbl + 0x180);
             if (!is_valid_ptr(fnAddr)) { log::to_file("[OPP] BAIL: vtbl+0x180 invalid\r\n"); return 0; }
 
-            fmt::snprintf(buf, sizeof(buf), "[OPP] get_object_result: calling vtbl+0x180 at %p\r\n", (void*)fnAddr);
-            log::debug(buf);
+            log::debugf("[OPP] get_object_result: calling vtbl+0x180 at %p\r\n", (void*)fnAddr);
 
             typedef __int64(__fastcall* VFuncType)(__int64);
             auto vfunc = reinterpret_cast<VFuncType>(fnAddr);
             __int64 result = spoof_call(vfunc, obj);
 
-            fmt::snprintf(buf, sizeof(buf), "[OPP] get_object_result: vtbl+0x180 returned %p\r\n", (void*)result);
-            log::debug(buf);
+            log::debugf("[OPP] get_object_result: vtbl+0x180 returned %p\r\n", (void*)result);
             return result;
         }
         __except (1) {
@@ -253,8 +239,6 @@ namespace
 
     void extract_stats()
     {
-        char buf[256];
-
         if (!g_testfuncMatch) {
             log::debug("[OPP] extract_stats: testfunc_match is NULL, skipping stats\r\n");
             return;
@@ -274,11 +258,9 @@ namespace
             typedef __int64(__fastcall* FnType)(uint64_t, uint32_t);
             auto fn = reinterpret_cast<FnType>(fnAddr);
 
-            fmt::snprintf(buf, sizeof(buf), "[OPP] extract_stats: CALL1 fn=%p rcx=%p edx=0x1C3E87C8\r\n", (void*)fnAddr, (void*)basePtr);
-            log::to_file(buf);
+            log::debugf("[OPP] extract_stats: CALL1 fn=%p rcx=%p edx=0x1C3E87C8\r\n", (void*)fnAddr, (void*)basePtr);
             __int64 v3 = spoof_call(fn, (uint64_t)basePtr, (uint32_t)0x1C3E87C8);
-            fmt::snprintf(buf, sizeof(buf), "[OPP] extract_stats: CALL1 returned v3=%p\r\n", (void*)v3);
-            log::to_file(buf);
+            log::debugf("[OPP] extract_stats: CALL1 returned v3=%p\r\n", (void*)v3);
             if (!is_valid_ptr((uintptr_t)v3)) { log::to_file("[OPP] BAIL extract_stats: v3 bad\r\n"); return; }
 
             uint64_t v3_vtbl = *(uint64_t*)v3;
@@ -288,11 +270,9 @@ namespace
             if (!is_valid_ptr(fnAddr2)) { log::to_file("[OPP] BAIL extract_stats: fnAddr2 bad\r\n"); return; }
 
             auto call2 = reinterpret_cast<FnType>(fnAddr2);
-            fmt::snprintf(buf, sizeof(buf), "[OPP] extract_stats: CALL2 fn=%p rcx=%p edx=0x1C3E87C9\r\n", (void*)fnAddr2, (void*)v3);
-            log::to_file(buf);
+            log::debugf("[OPP] extract_stats: CALL2 fn=%p rcx=%p edx=0x1C3E87C9\r\n", (void*)fnAddr2, (void*)v3);
             __int64 v4 = spoof_call(call2, (uint64_t)v3, (uint32_t)0x1C3E87C9);
-            fmt::snprintf(buf, sizeof(buf), "[OPP] extract_stats: CALL2 returned v4=%p\r\n", (void*)v4);
-            log::to_file(buf);
+            log::debugf("[OPP] extract_stats: CALL2 returned v4=%p\r\n", (void*)v4);
             if (!is_valid_ptr((uintptr_t)v4)) { log::to_file("[OPP] BAIL extract_stats: v4 bad\r\n"); return; }
 
             uint64_t v4_vtbl = *(uint64_t*)v4;
@@ -303,11 +283,9 @@ namespace
 
             typedef __int64(__fastcall* Fn3Type)(uint64_t);
             auto call3 = reinterpret_cast<Fn3Type>(fnAddr3);
-            fmt::snprintf(buf, sizeof(buf), "[OPP] extract_stats: CALL3 fn=%p rcx=%p\r\n", (void*)fnAddr3, (void*)v4);
-            log::to_file(buf);
+            log::debugf("[OPP] extract_stats: CALL3 fn=%p rcx=%p\r\n", (void*)fnAddr3, (void*)v4);
             __int64 finalResult = spoof_call(call3, (uint64_t)v4);
-            fmt::snprintf(buf, sizeof(buf), "[OPP] extract_stats: CALL3 returned finalResult=%p\r\n", (void*)finalResult);
-            log::to_file(buf);
+            log::debugf("[OPP] extract_stats: CALL3 returned finalResult=%p\r\n", (void*)finalResult);
             if (!is_valid_ptr((uintptr_t)finalResult)) { log::to_file("[OPP] BAIL extract_stats: finalResult bad\r\n"); return; }
 
             auto pWords = reinterpret_cast<uint32_t*>(finalResult);
@@ -330,22 +308,20 @@ namespace
             safe_strcpy(opp_info::g_opponent.clubTag,
                 reinterpret_cast<const char*>(pWords + 0x34), sizeof(opp_info::g_opponent.clubTag));
 
-            fmt::snprintf(buf, sizeof(buf),
+            log::debugf(
                 "[OPP] Stats: DR=%d Chem=%d OVR=%d Skill=%d W=%d L=%d D=%d DNF=%d\r\n",
                 opp_info::g_opponent.drRating, opp_info::g_opponent.chemistry,
                 opp_info::g_opponent.teamOvr, opp_info::g_opponent.skillRating,
                 opp_info::g_opponent.seasonWins, opp_info::g_opponent.seasonLosses,
                 opp_info::g_opponent.seasonTies, opp_info::g_opponent.dnfPercent);
-            log::to_file(buf);
 
             // ── Season info (creation date) ─────────────────────────
             if (g_seasonInfoFn) {
                 auto v31 = pWords[0x0E];
                 char v11[64] = {};
 
-                fmt::snprintf(buf, sizeof(buf), "[OPP] extract_stats: CALL_SEASON fn=%p arg=0x%X\r\n",
+                log::debugf("[OPP] extract_stats: CALL_SEASON fn=%p arg=0x%X\r\n",
                     (void*)g_seasonInfoFn, v31);
-                log::to_file(buf);
 
                 typedef void(__fastcall* SeasonFn)(unsigned int, __int64);
                 auto seasonFn = reinterpret_cast<SeasonFn>(g_seasonInfoFn);
@@ -359,8 +335,7 @@ namespace
                 opp_info::g_opponent.creationYear  = year;
                 opp_info::g_opponent.creationMonth = month;
 
-                fmt::snprintf(buf, sizeof(buf), "[OPP] Account created: %u/%d\r\n", year, month);
-                log::debug(buf);
+                log::debugf("[OPP] Account created: %u/%d\r\n", year, month);
             }
 
             // Release v4 only if different from v3 (same ptr = no AddRef was done)
@@ -368,8 +343,7 @@ namespace
                 uint64_t relFn = *(uint64_t*)(v4_vtbl + 0x8);
                 if (is_valid_ptr(relFn)) {
                     typedef void(__fastcall* ReleaseFn)(__int64);
-                    fmt::snprintf(buf, sizeof(buf), "[OPP] extract_stats: RELEASE fn=%p rcx=%p (v4!=v3)\r\n", (void*)relFn, (void*)v4);
-                    log::to_file(buf);
+                    log::debugf("[OPP] extract_stats: RELEASE fn=%p rcx=%p (v4!=v3)\r\n", (void*)relFn, (void*)v4);
                     spoof_call(reinterpret_cast<ReleaseFn>(relFn), (__int64)v4);
                     log::to_file("[OPP] extract_stats: RELEASE done\r\n");
                 }
@@ -394,9 +368,7 @@ namespace
         unsigned long long a1,
         unsigned long long /*a2*/)
     {
-        char buf[192];
-        fmt::snprintf(buf, sizeof(buf), "[OPP-IDK] Detour fired, a1=%p\r\n", (void*)a1);
-        log::debug(buf);
+        log::debugf("[OPP-IDK] Detour fired, a1=%p\r\n", (void*)a1);
 
         if (!g_seasonInfoFn || !a1 || !g_idkDataOffset) return 0;
         if (!is_valid_ptr(a1) || !is_valid_ptr(a1 + g_idkDataOffset + 8)) {
@@ -439,10 +411,8 @@ namespace
         unsigned long long a1,
         unsigned long long a2)
     {
-        char buf[256];
-        fmt::snprintf(buf, sizeof(buf),
+        log::debugf(
             "[OPP] MatchFoundDetour: a1=%p a2=0x%X\r\n", (void*)a1, (unsigned int)a2);
-        log::debug(buf);
 
         if ((unsigned int)a2 != 0x75AD)
             return 0;
@@ -458,15 +428,13 @@ namespace
             typedef __int64(__fastcall* Fn1Type)();
             auto fn1 = reinterpret_cast<Fn1Type>(g_func1);
 
-            fmt::snprintf(buf, sizeof(buf), "[OPP] Calling func1 at %p\r\n", (void*)g_func1);
-            log::debug(buf);
+            log::debugf("[OPP] Calling func1 at %p\r\n", (void*)g_func1);
 
             breadcrumb::set("opp_info:func1_pre");
             __int64 v18 = spoof_call(fn1);
             breadcrumb::set("opp_info:func1_post");
 
-            fmt::snprintf(buf, sizeof(buf), "[OPP] func1 returned v18=%p\r\n", (void*)v18);
-            log::debug(buf);
+            log::debugf("[OPP] func1 returned v18=%p\r\n", (void*)v18);
 
             if (!v18) { log::debug("[OPP] v18 is NULL, aborting\r\n"); return 0; }
 
@@ -476,50 +444,42 @@ namespace
             breadcrumb::set("opp_info:get_object_result_post");
             if (!result2) { log::debug("[OPP] result2 is NULL, aborting\r\n"); return 0; }
 
-            fmt::snprintf(buf, sizeof(buf), "[OPP] result2=%p, reading +0x838\r\n", (void*)result2);
-            log::debug(buf);
+            log::debugf("[OPP] result2=%p, reading +0x838\r\n", (void*)result2);
 
             __int64 inner = *(__int64*)(result2 + 0x838);
             if (!inner) { log::debug("[OPP] result2+0x838 is NULL, aborting\r\n"); return 0; }
 
-            fmt::snprintf(buf, sizeof(buf), "[OPP] inner (result2+0x838)=%p\r\n", (void*)inner);
-            log::debug(buf);
+            log::debugf("[OPP] inner (result2+0x838)=%p\r\n", (void*)inner);
 
             // ── Step 3: Call getOpponentFunc_3(inner, v18) → v19 ────
             typedef __int64(__fastcall* Fn3Type)(__int64, __int64);
             auto fn3 = reinterpret_cast<Fn3Type>(g_func3);
 
-            fmt::snprintf(buf, sizeof(buf), "[OPP] Calling func3(%p, %p)\r\n", (void*)inner, (void*)v18);
-            log::debug(buf);
+            log::debugf("[OPP] Calling func3(%p, %p)\r\n", (void*)inner, (void*)v18);
 
             breadcrumb::set("opp_info:func3_pre");
             __int64 v19 = spoof_call(fn3, inner, v18);
             breadcrumb::set("opp_info:func3_post");
 
-            fmt::snprintf(buf, sizeof(buf), "[OPP] func3 returned v19=%p\r\n", (void*)v19);
-            log::debug(buf);
+            log::debugf("[OPP] func3 returned v19=%p\r\n", (void*)v19);
 
             if (!v19) { log::debug("[OPP] v19 is NULL, aborting\r\n"); return 0; }
 
             // ── v19 raw dump (first 0x130 bytes as DWORDs) ────────
             {
                 log::debug("[OPP] v19 raw dump:\r\n");
-                char dumpLine[128];
                 uint32_t* dw = reinterpret_cast<uint32_t*>(v19);
                 for (int i = 0; i < 0x130 / 4; i += 4) {
-                    fmt::snprintf(dumpLine, sizeof(dumpLine),
+                    log::debugf(
                         "  +0x%03X: %08X %08X %08X %08X\r\n",
                         i * 4, dw[i], dw[i+1], dw[i+2], dw[i+3]);
-                    log::debug(dumpLine);
                 }
                 // Name + platform as strings
                 char strBuf[80];
                 safe_strcpy(strBuf, reinterpret_cast<const char*>(v19 + 0xF0), 32);
-                fmt::snprintf(dumpLine, sizeof(dumpLine), "  +0x0F0 (platform): %s\r\n", strBuf);
-                log::debug(dumpLine);
+                log::debugf("  +0x0F0 (platform): %s\r\n", strBuf);
                 safe_strcpy(strBuf, reinterpret_cast<const char*>(v19 + 0x110), 48);
-                fmt::snprintf(dumpLine, sizeof(dumpLine), "  +0x110 (name):     %s\r\n", strBuf);
-                log::debug(dumpLine);
+                log::debugf("  +0x110 (name):     %s\r\n", strBuf);
             }
 
             // ── Step 4: Extract name, platform, IDs from v19 ────────
@@ -539,19 +499,17 @@ namespace
                 opp_info::g_opponent.platform[2] = '\0';
             }
 
-            fmt::snprintf(buf, sizeof(buf),
+            log::debugf(
                 "[OPP] Name: %s | Platform: %s | Persona: %llu | Nucleus: %llu\r\n",
                 opp_info::g_opponent.name, opp_info::g_opponent.platform,
                 opp_info::g_opponent.personaId, opp_info::g_opponent.nucleusId);
-            log::debug(buf);
 
             // Grep-friendly match-boundary marker — matches FC26-Internal's convention
             // (hooks.cpp:1142 `[MatchFound] Oppponent Name : %s`). Use this line to
             // segment logs: anything before the last [MatchFound] belongs to a prior
             // session and can be discarded when analyzing the current match.
-            fmt::snprintf(buf, sizeof(buf),
+            log::debugf(
                 "[MatchFound] Opponent Name : %s\r\n", opp_info::g_opponent.name);
-            log::debug(buf);
 
             opp_info::g_opponent.valid = true;
 
@@ -570,10 +528,8 @@ namespace
                 else if (matchType == 0x1E) mtName = "FUT Champions";
                 else if (matchType == 0x22) mtName = "Division Rivals";
 
-                char mtBuf[128];
-                fmt::snprintf(mtBuf, sizeof(mtBuf),
+                log::debugf(
                     "[OPP] MatchType: %d (0x%X) = %s\r\n", matchType, matchType, mtName);
-                log::debug(mtBuf);
             }
 
             if (matchType == MT_FUTCHAMPS) {
@@ -595,7 +551,6 @@ namespace
 
 bool opp_info::Init(void* gameBase, unsigned long gameSize)
 {
-    char buf[256];
     log::debug("[OPP] Init: scanning patterns...\r\n");
 
     // 1. OnlineMatchmakingPreMatchController vtable (RIP-relative LEA)
@@ -604,8 +559,7 @@ bool opp_info::Init(void* gameBase, unsigned long gameSize)
             "48 8D 05 ? ? ? ? 48 89 01 48 8B D9 48 8D 05 ? ? ? ? 48 89 81 ? ? ? ? 74 73");
         if (m) {
             g_vtableBase = resolve_rip3_7((uintptr_t)m);
-            fmt::snprintf(buf, sizeof(buf), "[OPP] vtableBase: %p\r\n", (void*)g_vtableBase);
-            log::debug(buf);
+            log::debugf("[OPP] vtableBase: %p\r\n", (void*)g_vtableBase);
         } else {
             log::debug("[OPP] ERROR: vtable pattern not found\r\n");
         }
@@ -617,8 +571,7 @@ bool opp_info::Init(void* gameBase, unsigned long gameSize)
             "E8 ? ? ? ? 48 8B C8 E8 ? ? ? ? 48 8B F0 48 85 C0 74 ? E8 ? ? ? ? 48 8D 4C 24");
         if (m) {
             g_func1 = resolve_call_e8((uintptr_t)m);
-            fmt::snprintf(buf, sizeof(buf), "[OPP] func1: %p\r\n", (void*)g_func1);
-            log::debug(buf);
+            log::debugf("[OPP] func1: %p\r\n", (void*)g_func1);
         } else {
             log::debug("[OPP] ERROR: func1 pattern not found\r\n");
         }
@@ -630,8 +583,7 @@ bool opp_info::Init(void* gameBase, unsigned long gameSize)
             "E8 ? ? ? ? 48 85 C0 74 ? 48 8B 10 48 8B C8 FF 92 ? ? ? ? 48 8B D8 48 8B 8B");
         if (m) {
             g_func2 = resolve_call_e8((uintptr_t)m);
-            fmt::snprintf(buf, sizeof(buf), "[OPP] func2: %p\r\n", (void*)g_func2);
-            log::debug(buf);
+            log::debugf("[OPP] func2: %p\r\n", (void*)g_func2);
         } else {
             log::debug("[OPP] ERROR: func2 pattern not found\r\n");
         }
@@ -643,8 +595,7 @@ bool opp_info::Init(void* gameBase, unsigned long gameSize)
             "E8 ? ? ? ? EB 09 48 8D 56 78");
         if (m) {
             g_func3 = resolve_call_e8((uintptr_t)m);
-            fmt::snprintf(buf, sizeof(buf), "[OPP] func3: %p\r\n", (void*)g_func3);
-            log::debug(buf);
+            log::debugf("[OPP] func3: %p\r\n", (void*)g_func3);
         } else {
             log::debug("[OPP] ERROR: func3 pattern not found\r\n");
         }
@@ -656,8 +607,7 @@ bool opp_info::Init(void* gameBase, unsigned long gameSize)
             "40 53 48 83 EC ? 8B C1 48 8B DA");
         if (m) {
             g_seasonInfoFn = (uintptr_t)m;
-            fmt::snprintf(buf, sizeof(buf), "[OPP] seasonInfoFn: %p\r\n", (void*)g_seasonInfoFn);
-            log::debug(buf);
+            log::debugf("[OPP] seasonInfoFn: %p\r\n", (void*)g_seasonInfoFn);
         } else {
             log::debug("[OPP] WARNING: seasonInfo pattern not found (creation date unavailable)\r\n");
         }
@@ -669,8 +619,7 @@ bool opp_info::Init(void* gameBase, unsigned long gameSize)
             "48 8B 0D ? ? ? ? 48 8B 01 48 FF 60 ? CC CC 40 57");
         if (m) {
             g_testfuncMatch = resolve_rip3_7((uintptr_t)m);
-            fmt::snprintf(buf, sizeof(buf), "[OPP] testfuncMatch: %p\r\n", (void*)g_testfuncMatch);
-            log::debug(buf);
+            log::debugf("[OPP] testfuncMatch: %p\r\n", (void*)g_testfuncMatch);
         } else {
             log::debug("[OPP] WARNING: testfunc_match pattern not found (stats unavailable)\r\n");
         }
@@ -683,9 +632,8 @@ bool opp_info::Init(void* gameBase, unsigned long gameSize)
         if (m) {
             g_matchTypeMagic = *(uint32_t*)((uintptr_t)m + 1);    // imm32 after BA
             g_matchTypeVtOff = *(uint32_t*)((uintptr_t)m + 10);  // disp32 after FF 90 opcode
-            fmt::snprintf(buf, sizeof(buf),
+            log::debugf(
                 "[OPP] matchTypeMagic: 0x%X  vtOff: 0x%X\r\n", g_matchTypeMagic, g_matchTypeVtOff);
-            log::debug(buf);
         } else {
             log::debug("[OPP] WARNING: matchType pattern not found (FUT Champs guard disabled)\r\n");
         }
@@ -697,8 +645,7 @@ bool opp_info::Init(void* gameBase, unsigned long gameSize)
             "48 8D 0D ? ? ? ? 48 8D 05 ? ? ? ? 48 89 43 ? 33 C0 89 43 ? 87 43 ? 48 8D 05 ? ? ? ? 48 89 0B 48 89 43 ? 48 8D 4B ? 48 8D 05 ? ? ? ? 48 89 43");
         if (m) {
             g_idkVtable = resolve_rip3_7((uintptr_t)m);
-            fmt::snprintf(buf, sizeof(buf), "[OPP] idkVtable: %p\r\n", (void*)g_idkVtable);
-            log::debug(buf);
+            log::debugf("[OPP] idkVtable: %p\r\n", (void*)g_idkVtable);
         } else {
             log::debug("[OPP] WARNING: idk_hook pattern not found (FUT Champs creation date unavailable)\r\n");
         }
@@ -709,8 +656,7 @@ bool opp_info::Init(void* gameBase, unsigned long gameSize)
         __try {
             uintptr_t* vtable = reinterpret_cast<uintptr_t*>(g_vtableBase);
             g_targetFunc = vtable[1];
-            fmt::snprintf(buf, sizeof(buf), "[OPP] vtable[1] target: %p\r\n", (void*)g_targetFunc);
-            log::debug(buf);
+            log::debugf("[OPP] vtable[1] target: %p\r\n", (void*)g_targetFunc);
         } __except (1) {
             log::debug("[OPP] ERROR: cannot read vtable[1]\r\n");
             g_targetFunc = 0;
@@ -728,9 +674,8 @@ bool opp_info::Init(void* gameBase, unsigned long gameSize)
             // Read data offset from "48 8B A9 XX XX XX XX" (displacement at prologue+13)
             g_idkDataOffset = *(uint32_t*)((uintptr_t)idkFunc + 13);
 
-            fmt::snprintf(buf, sizeof(buf), "[OPP] idkFunc: %p  dataOffset: 0x%X\r\n",
+            log::debugf("[OPP] idkFunc: %p  dataOffset: 0x%X\r\n",
                 idkFunc, g_idkDataOffset);
-            log::debug(buf);
 
             // Search vtable for this function pointer to find the slot
             __try {
@@ -739,9 +684,8 @@ bool opp_info::Init(void* gameBase, unsigned long gameSize)
                     if (vtable[i] == g_idkFuncAddr) {
                         g_idkSlot = i;
                         g_idkTargetFunc = vtable[i];
-                        fmt::snprintf(buf, sizeof(buf), "[OPP] idkVtable[%d] = %p (MATCH)\r\n",
+                        log::debugf("[OPP] idkVtable[%d] = %p (MATCH)\r\n",
                             i, (void*)g_idkTargetFunc);
-                        log::debug(buf);
                         break;
                     }
                 }
@@ -758,14 +702,13 @@ bool opp_info::Init(void* gameBase, unsigned long gameSize)
     // Minimum requirement: vtable + func1/2/3
     g_initialized = g_vtableBase && g_targetFunc && g_func1 && g_func2 && g_func3;
 
-    fmt::snprintf(buf, sizeof(buf),
+    log::debugf(
         "[OPP] Init %s — vtbl:%p tgt:%p f1:%p f2:%p f3:%p season:%p match:%p idk:%p\r\n",
         g_initialized ? "OK" : "INCOMPLETE",
         (void*)g_vtableBase, (void*)g_targetFunc,
         (void*)g_func1, (void*)g_func2, (void*)g_func3,
         (void*)g_seasonInfoFn, (void*)g_testfuncMatch,
         (void*)g_idkTargetFunc);
-    log::debug(buf);
 
     return g_initialized;
 }

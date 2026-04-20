@@ -78,8 +78,10 @@ namespace
     {
         char buf[256];
 
-        fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s: %p\r\n", name, target);
-        log::debug(buf);
+        if (g_debugLog) {
+            fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s: %p\r\n", name, target);
+            log::debug(buf);
+        }
 
         // Follow JMP chain to resolve through inline hooks
         for (int chain = 0; chain < 8; chain++)
@@ -88,8 +90,10 @@ namespace
             {
                 int32_t rel = *(int32_t*)(target + 1);
                 unsigned char* next = target + 5 + rel;
-                fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s: E9 chain %p -> %p\r\n", name, target, next);
-                log::debug(buf);
+                if (g_debugLog) {
+                    fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s: E9 chain %p -> %p\r\n", name, target, next);
+                    log::debug(buf);
+                }
                 target = next;
             }
             else if (target[0] == 0xEB)
@@ -107,13 +111,15 @@ namespace
                 break;
         }
 
-        fmt::snprintf(buf, sizeof(buf),
-            "[ZeroHook] %s prologue: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
-            name,
-            target[0], target[1], target[2],  target[3],  target[4],
-            target[5], target[6], target[7],  target[8],  target[9],
-            target[10], target[11], target[12], target[13], target[14], target[15]);
-        log::debug(buf);
+        if (g_debugLog) {
+            fmt::snprintf(buf, sizeof(buf),
+                "[ZeroHook] %s prologue: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+                name,
+                target[0], target[1], target[2],  target[3],  target[4],
+                target[5], target[6], target[7],  target[8],  target[9],
+                target[10], target[11], target[12], target[13], target[14], target[15]);
+            log::debug(buf);
+        }
 
         auto reloc_result = reloc::relocate_displaced(target, (unsigned long long)target);
         if (!reloc_result.ok)
@@ -148,9 +154,11 @@ namespace
 
         ntclose_syscall(NTCLOSE_MAGIC, (unsigned long long)&req);
 
-        fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s hook: status=%u, result=%llu\r\n",
-                  name, req.status, req.result);
-        log::debug(buf);
+        if (g_debugLog) {
+            fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s hook: status=%u, result=%llu\r\n",
+                      name, req.status, req.result);
+            log::debug(buf);
+        }
 
         return req.status == 0 && req.result != 0;
     }
@@ -161,8 +169,10 @@ namespace
     {
         char buf[256];
 
-        fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s: %p\r\n", name, target);
-        log::debug(buf);
+        if (g_debugLog) {
+            fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s: %p\r\n", name, target);
+            log::debug(buf);
+        }
 
         for (int chain = 0; chain < 8; chain++)
         {
@@ -170,8 +180,10 @@ namespace
             {
                 int32_t rel = *(int32_t*)(target + 1);
                 unsigned char* next = target + 5 + rel;
-                fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s: E9 chain %p -> %p\r\n", name, target, next);
-                log::debug(buf);
+                if (g_debugLog) {
+                    fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s: E9 chain %p -> %p\r\n", name, target, next);
+                    log::debug(buf);
+                }
                 target = next;
             }
             else if (target[0] == 0xEB)
@@ -189,13 +201,15 @@ namespace
                 break;
         }
 
-        fmt::snprintf(buf, sizeof(buf),
-            "[ZeroHook] %s prologue: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
-            name,
-            target[0], target[1], target[2],  target[3],  target[4],
-            target[5], target[6], target[7],  target[8],  target[9],
-            target[10], target[11], target[12], target[13], target[14], target[15]);
-        log::debug(buf);
+        if (g_debugLog) {
+            fmt::snprintf(buf, sizeof(buf),
+                "[ZeroHook] %s prologue: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+                name,
+                target[0], target[1], target[2],  target[3],  target[4],
+                target[5], target[6], target[7],  target[8],  target[9],
+                target[10], target[11], target[12], target[13], target[14], target[15]);
+            log::debug(buf);
+        }
 
         auto reloc_result = reloc::relocate_displaced(target, (unsigned long long)target);
         if (!reloc_result.ok)
@@ -230,9 +244,11 @@ namespace
 
         ntclose_syscall(NTCLOSE_MAGIC, (unsigned long long)&req);
 
-        fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s hook: status=%u, trampoline=%p\r\n",
-                  name, req.status, (void*)req.result);
-        log::debug(buf);
+        if (g_debugLog) {
+            fmt::snprintf(buf, sizeof(buf), "[ZeroHook] %s hook: status=%u, trampoline=%p\r\n",
+                      name, req.status, (void*)req.result);
+            log::debug(buf);
+        }
 
         return (req.status == 0) ? req.result : 0;
     }
@@ -259,10 +275,35 @@ namespace
     static ID3D12CommandQueue* g_cmdQueue = nullptr;
     static UINT g_cachedWidth = 0;
     static UINT g_cachedHeight = 0;
+    static HANDLE g_fenceEvent = nullptr;
+
+    // Drain all GPU work queued on g_cmdQueue by signalling the fence and
+    // waiting until it completes. Safe to call only when g_fence / g_cmdQueue
+    // / g_fenceEvent are all valid. Returns true on successful drain.
+    static bool DrainGpuWork()
+    {
+        if (!g_fence || !g_cmdQueue || !g_fenceEvent) return false;
+        UINT64 waitVal = g_fenceValue;
+        if (SpoofVCall<HRESULT>(g_cmdQueue, d3d12_vtable::CmdQueue::Signal,
+                (ID3D12Fence*)g_fence, (UINT64)waitVal) != S_OK) return false;
+        g_fenceValue++;
+        if (SpoofVCall<UINT64>(g_fence, d3d12_vtable::Fence::GetCompletedValue) < waitVal) {
+            if (SpoofVCall<HRESULT>(g_fence, d3d12_vtable::Fence::SetEventOnCompletion,
+                    (UINT64)waitVal, (HANDLE)g_fenceEvent) != S_OK) return false;
+            spoof_call(WaitForSingleObject, (HANDLE)g_fenceEvent, (DWORD)1000);
+        }
+        return true;
+    }
 
     // ── Device health check (matches FC26 CheckDeviceAlive) ─────────
+    // Fast path once g_d3dDevice is cached: skip the GetDevice/Release dance.
     static bool CheckDeviceAlive(IDXGISwapChain* sc)
     {
+        if (g_rendererInitialized && g_d3dDevice) {
+            HRESULT rr = SpoofVCall<HRESULT>(g_d3dDevice, d3d12_vtable::Device::GetDeviceRemovedReason);
+            return SUCCEEDED(rr);
+        }
+
         ID3D12Device* dev = nullptr;
         {
             const IID iid = __uuidof(ID3D12Device);
@@ -372,6 +413,7 @@ namespace
         }
         if (g_rtvHeap)   { SpoofVCall<ULONG>(g_rtvHeap, com_vtable::Release); g_rtvHeap = nullptr; }
         if (g_fence)     { SpoofVCall<ULONG>(g_fence, com_vtable::Release); g_fence = nullptr; }
+        if (g_fenceEvent){ spoof_call(CloseHandle, (HANDLE)g_fenceEvent); g_fenceEvent = nullptr; }
         if (g_d3dDevice) { SpoofVCall<ULONG>(g_d3dDevice, com_vtable::Release); g_d3dDevice = nullptr; }
 
         g_fenceValue = 0;
@@ -396,10 +438,12 @@ namespace
 
         if (!logged) {
             logged = true;
-            char b[128];
-            fmt::snprintf(b, sizeof(b), "[Present] OS build=%u cmdQueue offset=0x%llX\r\n",
-                (unsigned)build, (unsigned long long)off);
-            log::debug(b);
+            if (g_debugLog) {
+                char b[128];
+                fmt::snprintf(b, sizeof(b), "[Present] OS build=%u cmdQueue offset=0x%llX\r\n",
+                    (unsigned)build, (unsigned long long)off);
+                log::debug(b);
+            }
         }
         return off;
     }
@@ -496,12 +540,14 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
             if (g_bufferCount < 3) g_bufferCount = 3;  // FC26: minimum 3 for high FPS
             if (g_bufferCount > MAX_BACK_BUFFERS) g_bufferCount = MAX_BACK_BUFFERS;
 
-            fmt::snprintf(_buf, sizeof(_buf),
-                "[Present] GetDesc fmt=%u %ux%u buffers=%u\r\n",
-                (unsigned)scDesc.BufferDesc.Format,
-                (unsigned)scDesc.BufferDesc.Width, (unsigned)scDesc.BufferDesc.Height,
-                (unsigned)g_bufferCount);
-            log::debug(_buf);
+            if (g_debugLog) {
+                fmt::snprintf(_buf, sizeof(_buf),
+                    "[Present] GetDesc fmt=%u %ux%u buffers=%u\r\n",
+                    (unsigned)scDesc.BufferDesc.Format,
+                    (unsigned)scDesc.BufferDesc.Width, (unsigned)scDesc.BufferDesc.Height,
+                    (unsigned)g_bufferCount);
+                log::debug(_buf);
+            }
 
             // ── Per-backbuffer command allocators (FC26: allocators first) ──
             for (UINT i = 0; i < g_bufferCount; i++) {
@@ -583,8 +629,10 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
                     rtvHandle.ptr += rtvDescSize;
                 }
             }
-            fmt::snprintf(_buf, sizeof(_buf), "[Present] RTV heap created with %u descriptors\r\n", g_bufferCount);
-            log::debug(_buf);
+            if (g_debugLog) {
+                fmt::snprintf(_buf, sizeof(_buf), "[Present] RTV heap created with %u descriptors\r\n", g_bufferCount);
+                log::debug(_buf);
+            }
 
             // ── Fence (FC26: fenceValue starts at 1) ──
             {
@@ -599,6 +647,15 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
                 return 0;
             }
             g_fenceValue = 1;
+
+            // Persistent fence event — reused every frame and by ResizeBuffers
+            // drain. Auto-reset, unsignalled. Closed only in TeardownD3D12.
+            g_fenceEvent = spoof_call(CreateEventW,
+                (LPSECURITY_ATTRIBUTES)nullptr, (BOOL)FALSE, (BOOL)FALSE, (LPCWSTR)nullptr);
+            if (!g_fenceEvent) {
+                log::debug("[Present] FAIL: CreateEventW (fence event) failed\r\n");
+                return 0;
+            }
 
             // ── Renderer init (FC26: hardcoded DXGI_FORMAT_R8G8B8A8_UNORM) ──
             log::debug("[Present] Calling D3D12Renderer::Init...\r\n");
@@ -636,17 +693,23 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
         g_renderer.RemapVertexBuffer();
     }
 
-    // ── Lazy resize: detect resolution change, teardown → re-init next frame ──
-    {
+    // ── Lazy resize: when cache is invalidated (ResizeBuffers hook zeros it,
+    // or on first frame), one GetDesc seeds it. As a safety net for resizes
+    // that bypass our hook, we re-poll every RESIZE_POLL_INTERVAL frames.
+    // This keeps the common path free of per-frame GetDesc.
+    constexpr LONG RESIZE_POLL_INTERVAL = 30;
+    if (g_cachedWidth == 0 || (frameNum % RESIZE_POLL_INTERVAL) == 0) {
         DXGI_SWAP_CHAIN_DESC scd = {};
         SpoofVCall<HRESULT>((IDXGISwapChain*)pSwapChain, dxgi_vtable::SwapChain::GetDesc, &scd);
         UINT w = scd.BufferDesc.Width, h = scd.BufferDesc.Height;
         if (g_cachedWidth == 0) { g_cachedWidth = w; g_cachedHeight = h; }
         if (w != g_cachedWidth || h != g_cachedHeight) {
-            char fb[128];
-            fmt::snprintf(fb, sizeof(fb), "[Present] Resize detected %ux%u -> %ux%u, teardown\r\n",
-                (unsigned)g_cachedWidth, (unsigned)g_cachedHeight, (unsigned)w, (unsigned)h);
-            log::debug(fb);
+            if (g_debugLog) {
+                char fb[128];
+                fmt::snprintf(fb, sizeof(fb), "[Present] Resize detected %ux%u -> %ux%u, teardown\r\n",
+                    (unsigned)g_cachedWidth, (unsigned)g_cachedHeight, (unsigned)w, (unsigned)h);
+                log::debug(fb);
+            }
             g_cachedWidth = w;
             g_cachedHeight = h;
             TeardownD3D12();
@@ -657,32 +720,33 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
     // Get current backbuffer index (FC26: direct call, no QI to SwapChain3)
     UINT bbIdx = SpoofVCall<UINT>((IDXGISwapChain*)pSwapChain, dxgi_vtable::SwapChain3::GetCurrentBackBufferIndex);
     if (bbIdx >= g_bufferCount) {
-        char fb[128];
-        fmt::snprintf(fb, sizeof(fb), "[Present] BAIL frame=%d bbIdx=%u >= bufCount=%u\r\n",
-            (int)frameNum, (unsigned)bbIdx, (unsigned)g_bufferCount);
-        log::debug(fb);
+        if (g_debugLog) {
+            char fb[128];
+            fmt::snprintf(fb, sizeof(fb), "[Present] BAIL frame=%d bbIdx=%u >= bufCount=%u\r\n",
+                (int)frameNum, (unsigned)bbIdx, (unsigned)g_bufferCount);
+            log::debug(fb);
+        }
         return 0;
     }
 
     FrameContext& fc = g_frameCtx[bbIdx];
     if (!fc.backBuffer) return 0;
 
-    // Wait for THIS frame context's previous GPU work to finish (FC26: fresh event per wait)
-    if (g_fence && fc.fenceValue != 0 &&
+    // Wait for THIS frame context's previous GPU work to finish — reuse the
+    // persistent fence event (auto-reset) instead of creating/closing per frame.
+    if (g_fence && g_fenceEvent && fc.fenceValue != 0 &&
         SpoofVCall<UINT64>(g_fence, d3d12_vtable::Fence::GetCompletedValue) < fc.fenceValue) {
-        HANDLE event = spoof_call(CreateEventW,
-            (LPSECURITY_ATTRIBUTES)nullptr, (BOOL)FALSE, (BOOL)FALSE, (LPCWSTR)nullptr);
         SpoofVCall<HRESULT>(g_fence, d3d12_vtable::Fence::SetEventOnCompletion,
-            (UINT64)fc.fenceValue, (HANDLE)event);
-        if (spoof_call(WaitForSingleObject, (HANDLE)event, (DWORD)1000) == WAIT_TIMEOUT) {
-            spoof_call(CloseHandle, (HANDLE)event);
-            char fb[128];
-            fmt::snprintf(fb, sizeof(fb), "[Present] TIMEOUT frame=%d bbIdx=%u fenceVal=%llu\r\n",
-                (int)frameNum, (unsigned)bbIdx, (unsigned long long)fc.fenceValue);
-            log::debug(fb);
+            (UINT64)fc.fenceValue, (HANDLE)g_fenceEvent);
+        if (spoof_call(WaitForSingleObject, (HANDLE)g_fenceEvent, (DWORD)1000) == WAIT_TIMEOUT) {
+            if (g_debugLog) {
+                char fb[128];
+                fmt::snprintf(fb, sizeof(fb), "[Present] TIMEOUT frame=%d bbIdx=%u fenceVal=%llu\r\n",
+                    (int)frameNum, (unsigned)bbIdx, (unsigned long long)fc.fenceValue);
+                log::debug(fb);
+            }
             return 0;
         }
-        spoof_call(CloseHandle, (HANDLE)event);
     }
 
     // Reset THIS frame's allocator + the shared command list
@@ -690,15 +754,19 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
     HRESULT hr2 = SpoofVCall<HRESULT>(g_cmdList, d3d12_vtable::CmdList::Reset,
         (ID3D12CommandAllocator*)fc.cmdAllocator, (ID3D12PipelineState*)nullptr);
     if (hr1 != 0 || hr2 != 0) {
-        char fb[128];
-        fmt::snprintf(fb, sizeof(fb), "[Present] RESET FAIL frame=%d alloc=0x%08X list=0x%08X\r\n",
-            (int)frameNum, (unsigned)hr1, (unsigned)hr2);
-        log::debug(fb);
+        if (g_debugLog) {
+            char fb[128];
+            fmt::snprintf(fb, sizeof(fb), "[Present] RESET FAIL frame=%d alloc=0x%08X list=0x%08X\r\n",
+                (int)frameNum, (unsigned)hr1, (unsigned)hr2);
+            log::debug(fb);
+        }
         HRESULT rr = SpoofVCall<HRESULT>(g_d3dDevice, d3d12_vtable::Device::GetDeviceRemovedReason);
         if (rr != 0) {
-            char fb2[128];
-            fmt::snprintf(fb2, sizeof(fb2), "[Present] DEVICE REMOVED reason=0x%08X\r\n", (unsigned)rr);
-            log::debug(fb2);
+            if (g_debugLog) {
+                char fb2[128];
+                fmt::snprintf(fb2, sizeof(fb2), "[Present] DEVICE REMOVED reason=0x%08X\r\n", (unsigned)rr);
+                log::debug(fb2);
+            }
             TeardownD3D12();
         }
         return 0;
@@ -720,12 +788,10 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
         (UINT)1, (const D3D12_CPU_DESCRIPTOR_HANDLE*)&fc.rtvDescriptor,
         (BOOL)FALSE, (const D3D12_CPU_DESCRIPTOR_HANDLE*)nullptr);
 
-    // Get dimensions + render overlay
+    // Reuse cached dimensions — already seeded by the resize-poll block above.
     if (g_renderer.IsInitialized()) {
-        DXGI_SWAP_CHAIN_DESC scDesc = {};
-        SpoofVCall<HRESULT>((IDXGISwapChain*)pSwapChain, dxgi_vtable::SwapChain::GetDesc, &scDesc);
-        float screenW = (float)scDesc.BufferDesc.Width;
-        float screenH = (float)scDesc.BufferDesc.Height;
+        float screenW = (float)g_cachedWidth;
+        float screenH = (float)g_cachedHeight;
 
         if (screenW > 0 && screenH > 0) {
             g_renderer.BeginFrame(screenW, screenH);
@@ -743,10 +809,12 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
     // Close + execute
     HRESULT hrClose = SpoofVCall<HRESULT>(g_cmdList, d3d12_vtable::CmdList::Close);
     if (hrClose != 0) {
-        char fb[128];
-        fmt::snprintf(fb, sizeof(fb), "[Present] CLOSE FAIL frame=%d hr=0x%08X\r\n",
-            (int)frameNum, (unsigned)hrClose);
-        log::debug(fb);
+        if (g_debugLog) {
+            char fb[128];
+            fmt::snprintf(fb, sizeof(fb), "[Present] CLOSE FAIL frame=%d hr=0x%08X\r\n",
+                (int)frameNum, (unsigned)hrClose);
+            log::debug(fb);
+        }
         return 0;
     }
     SpoofVCall(g_cmdQueue, d3d12_vtable::CmdQueue::ExecuteCommandLists,
@@ -762,20 +830,22 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
 }
 
 // ===== ResizeBuffers detour =====
-// Lightweight: release our D3D12 refs BEFORE the original destroys the buffers.
-// No GPU sync, no WaitForSingleObject — just teardown + return 0 (run original).
-// Next Present re-inits everything with the new buffers.
+// DXGI rejects ResizeBuffers with DXGI_ERROR_INVALID_CALL if any outstanding
+// references to the back buffers (including implicit GPU references from
+// in-flight command lists) still exist. We must:
+//   1. Drain all GPU work on our queue (signal fence + wait on event) so the
+//      GPU is done with the back buffers we rendered into last frame.
+//   2. Release our ID3D12Resource* back-buffer references.
+//   3. Return 0 so the original ResizeBuffers runs — now safe to destroy.
 extern "C" unsigned long long HookedResizeBuffers(void* ctx, void* pSwapChain,
     unsigned int bufferCount, unsigned int width)
 {
     if (g_rendererInitialized && g_d3dDevice) {
-        // 25H2 fix: lightweight release — only drop back buffer refs so
-        // ResizeBuffers can succeed. Keep PSO/font/VB/fence/device alive.
-        log::debug("[ResizeBuffers] Lightweight release (back buffers only)\r\n");
+        log::debug("[ResizeBuffers] Draining GPU + releasing back buffers\r\n");
+        DrainGpuWork();
         ReleaseBackBuffersOnly();
         g_needsBackBufferReinit = true;
     } else {
-        // Not initialized or no device — full teardown
         log::debug("[ResizeBuffers] Full teardown\r\n");
         TeardownD3D12();
     }

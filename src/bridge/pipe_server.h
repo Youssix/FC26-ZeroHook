@@ -82,10 +82,8 @@ namespace bridge {
         ClientSlot* slot = (ClientSlot*)param;
         HANDLE hPipe = slot->pipe;
 
-        char logBuf[128];
-        fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] Client thread started (slot=%d)\n",
-                      (int)(slot - g_clientSlots));
-        log::to_file(logBuf);
+        log::debugf("[bridge] Client thread started (slot=%d)\n",
+                    (int)(slot - g_clientSlots));
 
         char readBuf[4096];
         int readPos = 0;
@@ -142,9 +140,8 @@ namespace bridge {
         slot->pipe = nullptr;
         _InterlockedExchange(&slot->inUse, 0);
 
-        fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] Client disconnected (slot=%d)\n",
-                      (int)(slot - g_clientSlots));
-        log::to_file(logBuf);
+        log::debugf("[bridge] Client disconnected (slot=%d)\n",
+                    (int)(slot - g_clientSlots));
         return 0;
     }
 
@@ -167,8 +164,6 @@ namespace bridge {
         (void)param;
         auto& apis = pipeApis();
 
-        char logBuf[256];
-
         while (!InterlockedCompareExchange(&g_shutdown, 0, 0)) {
             // Create a new pipe instance for the next client. Unlimited
             // instances so multiple clients can coexist (MCP + debug script
@@ -185,8 +180,7 @@ namespace bridge {
             );
 
             if (hPipe == INVALID_HANDLE_VALUE) {
-                fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] CreateNamedPipe failed\n");
-                log::to_file(logBuf);
+                log::debug("[bridge] CreateNamedPipe failed\n");
                 Sleep(1000);
                 continue;
             }
@@ -202,8 +196,7 @@ namespace bridge {
             // Allocate a slot and spawn a handler thread.
             int slotIdx = allocClientSlot();
             if (slotIdx < 0) {
-                fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] Client pool full — rejecting\n");
-                log::to_file(logBuf);
+                log::debug("[bridge] Client pool full — rejecting\n");
                 apis.pDisconnectNamedPipe(hPipe);
                 apis.pCloseHandle(hPipe);
                 continue;
@@ -216,8 +209,7 @@ namespace bridge {
                                                 (LPTHREAD_START_ROUTINE)clientThread,
                                                 &g_clientSlots[slotIdx], 0, nullptr);
             if (!hClient) {
-                fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] CreateThread failed for slot %d\n", slotIdx);
-                log::to_file(logBuf);
+                log::debugf("[bridge] CreateThread failed for slot %d\n", slotIdx);
                 apis.pDisconnectNamedPipe(hPipe);
                 apis.pCloseHandle(hPipe);
                 g_clientSlots[slotIdx].pipe = nullptr;
@@ -228,13 +220,11 @@ namespace bridge {
             // Detach — the thread owns cleanup.
             apis.pCloseHandle(hClient);
 
-            fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] Client accepted → slot %d\n", slotIdx);
-            log::to_file(logBuf);
+            log::debugf("[bridge] Client accepted → slot %d\n", slotIdx);
             // Loop back immediately to create the next pipe instance.
         }
 
-        fmt::snprintf(logBuf, sizeof(logBuf), "[bridge] Pipe accept thread exiting\n");
-        log::to_file(logBuf);
+        log::debug("[bridge] Pipe accept thread exiting\n");
         return 0;
     }
 

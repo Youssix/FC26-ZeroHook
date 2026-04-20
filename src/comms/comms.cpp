@@ -9,9 +9,7 @@ bool comms::test_channel()
 
     ntclose_syscall(NTCLOSE_MAGIC, (unsigned long long)&req);
 
-    char buf[128];
-    fmt::snprintf(buf, sizeof(buf), "[ZeroHook] Ping: status=%u, result=0x%llX\r\n", req.status, req.result);
-    log::debug(buf);
+    log::debugf("[ZeroHook] Ping: status=%u, result=0x%llX\r\n", req.status, req.result);
 
     if (req.status == 0 && req.result == 0xACE)
     {
