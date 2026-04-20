@@ -1141,6 +1141,19 @@ void overlay::Frame(float screenW, float screenH)
                     ai_control::ApplyForceAfkPath(s_lastForceAfk);
                 }
 
+                // Force State Machine Enter — patch sub_1489A9CE0 @ 0x1489A9EBA
+                // (6-byte jnz -> 6 NOPs) so the first event at phase 0 falls
+                // through to the natural sub_1427FA200(matchCtx, 0, 0) Enter.
+                // Same code path a real AFK event runs; peer-identical traffic.
+                static bool s_lastForceStateEnter = false;
+                CustomMenu::g_menu.Toggle("Force State Machine Enter (byte patch)",
+                    (bool*)&ai_control::g_forceStateMachineEnter,
+                    "EPT byte-patches sub_1489A9CE0 at 0x1489A9EBA (jnz +0xB4 -> 6 NOPs) so the ONLINE_CPU_CONTROL state machine dispatches sub_1427FA200(matchCtx,0,0) on the first event at phase 0. Uses the game's own natural AFK-takeover path — peer-identical traffic. Requires ONLINE_CPU_CONTROL registry NOT set (default).");
+                if ((bool)ai_control::g_forceStateMachineEnter != s_lastForceStateEnter) {
+                    s_lastForceStateEnter = (bool)ai_control::g_forceStateMachineEnter;
+                    ai_control::ApplyForceStateMachineEnter(s_lastForceStateEnter);
+                }
+
                 // One-shot test buttons for the 0xE81D3B4C hypothesis.
                 // Each button fires a single packet with a different payload
                 // flavor seen in the working-takeover logs.
@@ -1356,10 +1369,11 @@ void overlay::Frame(float screenW, float screenH)
     }
 
     // ── AI vs Opps / Disable Opponent AI ──
-    // One-shot per match. SendAiTakeover self-gates: no-op until MatchTimer
-    // arms g_kickoffArmed AND until the one-shot latch g_aiTakeoverFired
-    // clears at match-ended. Called every overlay frame; almost always a
-    // cheap early-return.
+    // Both self-gate on g_playerIdCaptured (match-loading signal) and
+    // their own one-shot latches — cheap per-frame early-return once
+    // armed. Latches reset automatically on match-end via the
+    // MatchTimer hook in network_hooks.cpp, so turning either toggle
+    // on once auto-fires every subsequent match.
     if (g_aiVsOpps || g_disableAi)
     {
         __try {

@@ -38,6 +38,11 @@ namespace ai_control
     // Reset to false at match-ended and on new kickoff.
     extern volatile bool g_aiTakeoverFired;
 
+    // One-shot latch — set true after SendDisableOpponentAi (roster-spoof)
+    // succeeds once per match. Reset in ResetCapture() so every new match
+    // re-fires automatically when g_playerIdCaptured flips true.
+    extern volatile bool g_rosterSpoofFired;
+
     // Deep-hook AI takeover toggle. When true, the AFK_DECISION_BRAIN hook
     // (sub_14282BB00) intercepts calls for our own slots and invokes the
     // game's own sub_1427F7640 (FnAfkTakeover) directly with the exact args
@@ -60,6 +65,27 @@ namespace ai_control
     // returns before reaching our patched site and nothing fires.
     extern volatile bool g_forceAfkPath;
     void ApplyForceAfkPath(bool enable);
+
+    // Hook-based one-shot ENTER dispatcher (Option C, supersedes the
+    // byte-patch attempt at 0x1489A9EBA which was too broad — it fired at
+    // boot/menu because sub_1489A9CE0 is session-level, not match-only).
+    //
+    // InstallStateMachineHook() installs an EPT hook on sub_1489A9CE0 entry.
+    // The detour, on every call, checks ALL of these gates:
+    //   1. g_forceStateMachineEnter toggle on
+    //   2. matchCtx = FnGetMatchCtx() is non-null
+    //   3. *(matchCtx + 0x4AD0) != 0  (IsInActiveGameplay — real match loaded, unpaused)
+    //   4. *(matchCtx + 0x4CA1) != 0  (AFK feature gate live)
+    //   5. One-shot latch per matchCtx (resets when matchCtx changes = new match)
+    // If all pass, calls sub_1427FA200(matchCtx, 0, 0) ONCE and passes
+    // through. The Enter call transitions phase to 2 internally, and the
+    // latch prevents re-entry on subsequent ticks. No byte patching, no
+    // menu-level misfires.
+    //
+    // Install at boot; the toggle just flips the bool at runtime.
+    extern volatile bool g_forceStateMachineEnter;
+    void ApplyForceStateMachineEnter(bool enable);
+    bool InstallStateMachineHook();
 
     // Reset capture flag (called on match start / kickoff frame).
     void ResetCapture();

@@ -32,6 +32,7 @@
 #include "rage.h"
 #include "../spoof/spoof_call.hpp"
 #include "../game/game.h"
+#include "../hook/ept_hook.h"
 #include "../log/log.h"
 #include "../log/fmt.h"
 #include "../menu/toast.h"
@@ -41,8 +42,10 @@ volatile uint32_t ai_control::g_ourPlayerId        = 0;
 volatile bool     ai_control::g_playerIdCaptured   = false;
 volatile bool     ai_control::g_kickoffArmed       = false;
 volatile bool     ai_control::g_aiTakeoverFired    = false;
+volatile bool     ai_control::g_rosterSpoofFired   = false;
 volatile bool     ai_control::g_deepHookAiTakeover = false;
 volatile bool     ai_control::g_forceAfkPath       = false;
+volatile bool     ai_control::g_forceStateMachineEnter = false;
 
 namespace
 {
@@ -59,6 +62,80 @@ namespace
     constexpr unsigned char kOrigJzBytes[2]  = { 0x74, 0x1B };
     constexpr unsigned char kNopBytes[2]     = { 0x90, 0x90 };
     bool g_forceAfkPathInstalled = false;
+
+    // State-machine hook state (Option C — one-shot hook replacing the
+    // broken byte-patch at 0x1489A9EBA).
+    constexpr uintptr_t kStateMachineRva     = 0x89A9CE0ULL;  // sub_1489A9CE0 entry
+    constexpr uintptr_t kFnAiEnterRva        = 0x27FA200ULL;  // sub_1427FA200
+    __declspec(align(4096)) ept::ept_hook_install_params_t g_stateMachineHookParams = {};
+    bool            g_stateMachineHookInstalled = false;
+    volatile long   g_stateMachineFired         = 0;  // one-shot latch (per matchCtx)
+    volatile uintptr_t g_stateMachineLastCtx    = 0;  // resets latch on new match
+}
+
+// Detour installed at sub_1489A9CE0 entry. See ai_control.h for gate list.
+// Returns 0 → EPT stub runs original function (pass-through). Must NEVER
+// return non-zero — otherwise the state machine is skipped and the game
+// stalls.
+extern "C" unsigned long long StateMachineDetour(
+    void* /*ctx*/,
+    unsigned long long a1 /* state_root */)
+{
+    if (!ai_control::g_forceStateMachineEnter) return 0;
+    if (!a1) return 0;
+
+    // matchCtx via FnGetMatchCtx (same accessor sub_142805590 inlines).
+    if (!offsets::FnGetMatchCtx) return 0;
+    typedef uintptr_t(__fastcall* get_ctx_fn)();
+    uintptr_t matchCtx = 0;
+    __try { matchCtx = reinterpret_cast<get_ctx_fn>(offsets::FnGetMatchCtx)(); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+    if (!matchCtx) return 0;
+
+    // New match? Reset one-shot latch.
+    uintptr_t lastCtx = (uintptr_t)g_stateMachineLastCtx;
+    if (lastCtx != matchCtx) {
+        _InterlockedExchange(&g_stateMachineFired, 0);
+        g_stateMachineLastCtx = matchCtx;
+    }
+
+    // Gate: IsInActiveGameplay — live match loaded (not menu / loading).
+    __try {
+        if (!*reinterpret_cast<uint8_t*>(matchCtx + 0x4AD0)) return 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+
+    // Gate: AFK feature must be enabled for this match.
+    __try {
+        if (!*reinterpret_cast<uint8_t*>(matchCtx + 0x4CA1)) return 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+
+    // NOTE: no phase==0 gate. Phase 0 is the pre-match "waiting for AFK event"
+    // state — by the time a real match is running, phase has already moved to
+    // 1 or beyond, so gating on phase==0 would mean the hook never fires. The
+    // sub_1427FA200 function has its own idempotency via state_root+0x1AA8,
+    // and our own one-shot latch below prevents re-entry, so phase-level
+    // gating is redundant.
+
+    // One-shot latch — fire at most once per match.
+    if (_InterlockedCompareExchange(&g_stateMachineFired, 1, 0) != 0) return 0;
+
+    uintptr_t enter_addr =
+        reinterpret_cast<uintptr_t>(offsets::GameBase) + kFnAiEnterRva;
+    typedef char(__fastcall* enter_fn_t)(uintptr_t, __int64, __int64);
+    auto enter_fn = reinterpret_cast<enter_fn_t>(enter_addr);
+
+    char b[192];
+    fmt::snprintf(b, sizeof(b),
+        "[ForceStateEnter] firing sub_1427FA200(%p, 0, 0) once per match (ctx=%p, state_root=%p)\r\n",
+        (void*)matchCtx, (void*)matchCtx, (void*)a1);
+    log::debug(b);
+
+    __try { enter_fn(matchCtx, 0, 0); }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        log::debug("[ForceStateEnter] SEH caught in sub_1427FA200 call\r\n");
+    }
+
+    return 0;  // pass-through: let the original state machine run too
 }
 
 void ai_control::ApplyForceAfkPath(bool enable)
@@ -108,11 +185,57 @@ void ai_control::ApplyForceAfkPath(bool enable)
     }
 }
 
+bool ai_control::InstallStateMachineHook()
+{
+    if (g_stateMachineHookInstalled) return true;
+    if (!offsets::GameBase) return false;
+
+    unsigned char* target = reinterpret_cast<unsigned char*>(
+        reinterpret_cast<uintptr_t>(offsets::GameBase) + kStateMachineRva);
+
+    bool ok = ept::install_hook(g_stateMachineHookParams,
+                                target,
+                                (void*)&StateMachineDetour,
+                                "StateMachineEnter");
+    if (ok) {
+        g_stateMachineHookInstalled = true;
+        log::debug("[ForceStateEnter] EPT hook installed on sub_1489A9CE0\r\n");
+    } else {
+        log::debug("[ForceStateEnter] EPT hook install FAILED\r\n");
+    }
+    return ok;
+}
+
+void ai_control::ApplyForceStateMachineEnter(bool enable)
+{
+    // Hook is always installed (once). Toggle just flips the behavior bool
+    // that the detour reads on every call. No byte patching.
+    if (enable) {
+        if (!g_stateMachineHookInstalled) {
+            if (!InstallStateMachineHook()) {
+                toast::Show(toast::Type::Error, "Force State Enter: hook install failed");
+                g_forceStateMachineEnter = false;
+                return;
+            }
+        }
+        // Reset latch so it fires on the next valid match tick.
+        _InterlockedExchange(&g_stateMachineFired, 0);
+        g_forceStateMachineEnter = true;
+        toast::Show(toast::Type::Success, "Force State Enter: ON (one-shot per match)");
+        log::debug("[ForceStateEnter] enabled — latch reset, waiting for live match + phase=0\r\n");
+    } else {
+        g_forceStateMachineEnter = false;
+        toast::Show(toast::Type::Info, "Force State Enter: OFF");
+        log::debug("[ForceStateEnter] disabled\r\n");
+    }
+}
+
 void ai_control::ResetCapture()
 {
     g_playerIdCaptured = false;
     g_ourPlayerId      = 0;
     g_aiTakeoverFired  = false;
+    g_rosterSpoofFired = false;
 }
 
 void ai_control::OnIncomingControlOpcode(uint32_t team, uint32_t player)
@@ -471,11 +594,108 @@ bool ai_control::SendAiTakeover()
 
 bool ai_control::SendDisableOpponentAi()
 {
-    // Disabled for now. Writing to an opponent slot without hooking the
-    // peer's FnMismatchGate (impossible from our side) causes immediate
-    // DataMismatch from the peer's validator. See AI_VS_OPP_FIX.md.
-    // Menu toggle is still wired but does nothing until we have a safe
-    // approach (e.g., server-authoritative AFK-takeover packet replay).
+    // 0xFAE6B64D roster-spoof reproduction. Fires 11 forged player-
+    // identity announcements targeting slots 0..0x0A on the opponent's
+    // side. Peer's handler has no validator on persona-ID or slot
+    // occupancy, so it installs 11 ghost roster entries — the same
+    // primitive seen in the captured attack logs (disable_vs_ai_2.log
+    // @ 16:51:30.773, 11-packet burst with bare 56-byte payload).
+    //
+    // Payload shape (matches attacker's forged buffer, not the rich
+    // form sub_1489FD580 emits natively):
+    //   buf[0]      = oppSide  (0=home, 1=away)
+    //   buf[1]      = slotIdx  (0..0x0A)
+    //   buf[2]      = 0xFF
+    //   buf[3]      = slotIdx  (mirror)
+    //   buf[4..23]  = 0        (persona-id fields zero — no validator)
+    //   buf[24..47] = gamertag "ZH_BOT_0" .. "ZH_BOT_A" (distinctive
+    //                so the 11 ghost entries are visually recognisable
+    //                in the lobby roster)
+    //   buf[48..55] = 0
+    //
+    // Sent through rage::get_dispatch() — identical pattern to
+    // FireAiHeartbeat. The dispatcher's +0x48 method fans out to both
+    // local subscribers and the peer socket, so peers receive them
+    // exactly as they arrived on us in the attack log.
+    //
+    // Auto-fire gating (same pattern as SendAiTakeover):
+    //   g_rosterSpoofFired   one-shot latch, reset per match via
+    //                        ResetCapture() on match-end / new-kickoff.
+    //   g_playerIdCaptured   flips true when the game broadcasts the
+    //                        initial 0xA2CB726E controller-init during
+    //                        match setup — that's the "match loading"
+    //                        window the user asked to automate.
+    // With these gates, the menu toggle can stay on across matches and
+    // the spoof will fire exactly once per match, automatically.
+    if (g_rosterSpoofFired) return false;
+    if (!g_playerIdCaptured) return false;
+
+    uintptr_t rcx = 0;
+    rage::dispatch_fn_t fn = nullptr;
+    if (!rage::get_dispatch(rcx, fn)) {
+        log::debug("[AI] RosterSpoof: get_dispatch failed\r\n");
+        toast::Show(toast::Type::Error, "RosterSpoof: dispatcher unavailable");
+        return false;
+    }
+
+    uintptr_t ctx = GetMatchCtx();
+    if (!ctx) {
+        toast::Show(toast::Type::Error, "RosterSpoof: no match ctx");
+        return false;
+    }
+
+    uint32_t mySide = 0xFFFFFFFFu;
+    __try { mySide = *reinterpret_cast<uint32_t*>(ctx + 0x23D4); }
+    __except (EXCEPTION_EXECUTE_HANDLER) {}
+    if (mySide != 0 && mySide != 1) {
+        toast::Show(toast::Type::Error, "RosterSpoof: mySide invalid");
+        return false;
+    }
+    const uint8_t oppSide = static_cast<uint8_t>(1u - mySide);
+
+    uint64_t opcode = 0xFAE6B64DULL;
+    uint8_t  buf[0x38];
+
+    int sent  = 0;
+    int threw = 0;
+
+    hook::g_allow_attack_send = true;
+    for (uint8_t slot = 0; slot <= 0x0A; ++slot) {
+        __stosb(reinterpret_cast<unsigned char*>(buf), 0, 0x38);
+
+        buf[0] = oppSide;
+        buf[1] = slot;
+        buf[2] = 0xFF;
+        buf[3] = slot;
+
+        // gamertag at offset 24 — "ZH_BOT_" + hex-slot (0..9, A)
+        static const unsigned char kPrefix[] = { 'Z','H','_','B','O','T','_' };
+        for (int i = 0; i < 7; ++i) buf[24 + i] = kPrefix[i];
+        buf[24 + 7] = (slot < 10)
+            ? static_cast<uint8_t>('0' + slot)
+            : static_cast<uint8_t>('A' + (slot - 10));
+
+        __try {
+            spoof_call(fn, (uint64_t)rcx,
+                       (uint64_t*)&opcode, (uint64_t*)&opcode,
+                       (void*)buf, (int)0x38, (char)0xFF, (unsigned char)0);
+            ++sent;
+        } __except (EXCEPTION_EXECUTE_HANDLER) { ++threw; }
+    }
+    hook::g_allow_attack_send = false;
+
+    char lb[192];
+    fmt::snprintf(lb, sizeof(lb),
+        "[AI] RosterSpoof: 0xFAE6B64D oppSide=%u mySide=%u sent=%d threw=%d\r\n",
+        oppSide, mySide, sent, threw);
+    log::debug(lb);
+
+    if (sent == 11 && threw == 0) {
+        g_rosterSpoofFired = true;
+        toast::Show(toast::Type::Success, "Roster spoof fired (11 pkts)");
+        return true;
+    }
+    toast::Show(toast::Type::Error, "Roster spoof partial/failed");
     return false;
 }
 

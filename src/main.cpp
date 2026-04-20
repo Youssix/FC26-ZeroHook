@@ -6,6 +6,7 @@
 #include "hook/network_hooks.h"
 #include "offsets/offsets.h"
 #include "bridge/bridge.h"
+#include "features/ai_control.h"
 #pragma comment(lib, "kernel32.lib")
 
 volatile LONG g_injection_marker = 0;
@@ -35,6 +36,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
         hook::install_playerside_hook();      breadcrumb::set("boot:playerside_hooked");
         hook::install_match_timer_hook();     breadcrumb::set("boot:matchtimer_hooked");
         hook::install_eaid_hook();            breadcrumb::set("boot:eaid_hooked");
+        ai_control::InstallStateMachineHook();  breadcrumb::set("boot:statemachine_hooked");
              breadcrumb::set("boot:ai_trace_hooked");
 
         bridge::init("FC26");
