@@ -622,25 +622,18 @@ bool ai_control::SendDisableOpponentAi()
         return false;
     }
 
-    // Read mySide from matchCtx+0x23D4 (authoritative team index used
-    // internally by the slot table). Note: sliders::playerside does NOT
-    // carry the same value — they're populated from different sources and
-    // the inversion flips opp/home. matchCtx+0x23D4 is what the roster
-    // subsystem actually keys on.
-    uintptr_t ctx = GetMatchCtx();
-    if (!ctx) {
-        toast::Show(toast::Type::Error, "RosterSpoof: no match ctx");
+    // User observation: with sliders::playerside used as mySide, ghosts
+    // ended up on our own team. matchCtx+0x23D4 worked as mySide. The
+    // two values appear to have inverse polarity in this build.
+    // Hypothesis under test: sliders::playerside is actually the OPP
+    // side, not our side — so we use it DIRECTLY as oppSide.
+    const int side = sliders::playerside;
+    if (side != 0 && side != 1) {
+        toast::Show(toast::Type::Error, "RosterSpoof: playerside invalid");
         return false;
     }
-
-    uint32_t mySide = 0xFFFFFFFFu;
-    __try { mySide = *reinterpret_cast<uint32_t*>(ctx + 0x23D4); }
-    __except (EXCEPTION_EXECUTE_HANDLER) {}
-    if (mySide != 0 && mySide != 1) {
-        toast::Show(toast::Type::Error, "RosterSpoof: mySide invalid");
-        return false;
-    }
-    const uint8_t oppSide = static_cast<uint8_t>(1u - mySide);
+    const uint32_t mySide  = static_cast<uint32_t>(1 - side);
+    const uint8_t  oppSide = static_cast<uint8_t>(side);
 
     uint64_t opcode = 0xFAE6B64DULL;
     uint8_t  buf[0x38];
