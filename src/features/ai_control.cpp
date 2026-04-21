@@ -622,20 +622,17 @@ bool ai_control::SendDisableOpponentAi()
         return false;
     }
 
-    uintptr_t ctx = GetMatchCtx();
-    if (!ctx) {
-        toast::Show(toast::Type::Error, "RosterSpoof: no match ctx");
+    // Use sliders::playerside — the canonical global for our team side
+    // (already used by OnIncomingControlOpcode + ClaimMySlot). Avoids
+    // the __try/SEH around matchCtx+0x23D4 and stays consistent with the
+    // rest of ai_control.cpp.
+    const int side = sliders::playerside;
+    if (side != 0 && side != 1) {
+        toast::Show(toast::Type::Error, "RosterSpoof: playerside invalid");
         return false;
     }
-
-    uint32_t mySide = 0xFFFFFFFFu;
-    __try { mySide = *reinterpret_cast<uint32_t*>(ctx + 0x23D4); }
-    __except (EXCEPTION_EXECUTE_HANDLER) {}
-    if (mySide != 0 && mySide != 1) {
-        toast::Show(toast::Type::Error, "RosterSpoof: mySide invalid");
-        return false;
-    }
-    const uint8_t oppSide = static_cast<uint8_t>(1u - mySide);
+    const uint32_t mySide  = static_cast<uint32_t>(side);
+    const uint8_t  oppSide = static_cast<uint8_t>(1 - side);
 
     uint64_t opcode = 0xFAE6B64DULL;
     uint8_t  buf[0x38];
@@ -643,8 +640,18 @@ bool ai_control::SendDisableOpponentAi()
     int sent  = 0;
     int threw = 0;
 
+    // Loop slots 1..9 (9 iterations). Two fixes from earlier:
+    //   1. Off-by-one: previous bound `slot <= 0x0A` = 11 iterations. Native
+    //      FnNativeRosterSender_FAE6B64D loops `i < 0xA` = 10 iterations.
+    //      The extra 11th packet at slot=10 was out-of-range and stomping
+    //      the opponent's team display header (likely why their name was
+    //      disappearing entirely).
+    //   2. Skip slot 0 — opponent's captain display position. Overwriting
+    //      it replaced opponent's real name with ZH_BOT. Skipping keeps
+    //      their captain visible while 9 non-captain slots still fill
+    //      with ghost bots.
     hook::g_allow_attack_send = true;
-    for (uint8_t slot = 0; slot <= 0x0A; ++slot) {
+    for (uint8_t slot = 1; slot < 0x0A; ++slot) {
         __stosb(reinterpret_cast<unsigned char*>(buf), 0, 0x38);
 
         buf[0] = oppSide;
@@ -652,12 +659,10 @@ bool ai_control::SendDisableOpponentAi()
         buf[2] = 0xFF;
         buf[3] = slot;
 
-        // gamertag at offset 24 — "ZH_BOT_" + hex-slot (0..9, A)
+        // gamertag at offset 24 — "ZH_BOT_" + hex-slot (1..9)
         static const unsigned char kPrefix[] = { 'Z','H','_','B','O','T','_' };
         for (int i = 0; i < 7; ++i) buf[24 + i] = kPrefix[i];
-        buf[24 + 7] = (slot < 10)
-            ? static_cast<uint8_t>('0' + slot)
-            : static_cast<uint8_t>('A' + (slot - 10));
+        buf[24 + 7] = static_cast<uint8_t>('0' + slot);
 
         __try {
             spoof_call(fn, (uint64_t)rcx,
@@ -669,12 +674,12 @@ bool ai_control::SendDisableOpponentAi()
     hook::g_allow_attack_send = false;
 
     log::debugf(
-        "[AI] RosterSpoof: 0xFAE6B64D oppSide=%u mySide=%u sent=%d threw=%d\r\n",
+        "[AI] RosterSpoof: 0xFAE6B64D oppSide=%u mySide=%u sent=%d threw=%d (slots 1..9, captain skipped)\r\n",
         oppSide, mySide, sent, threw);
 
-    if (sent == 11 && threw == 0) {
+    if (sent == 9 && threw == 0) {
         g_rosterSpoofFired = true;
-        toast::Show(toast::Type::Success, "Roster spoof fired (11 pkts)");
+        toast::Show(toast::Type::Success, "Roster spoof fired (9 pkts, captain kept)");
         return true;
     }
     toast::Show(toast::Type::Error, "Roster spoof partial/failed");
