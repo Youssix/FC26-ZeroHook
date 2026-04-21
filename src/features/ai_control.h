@@ -148,6 +148,20 @@ namespace ai_control
     // Fire for the opponent side (slot = opposite of playerside).
     bool SendDisableOpponentAi();
 
+    // Experiment A — mirror of SendDisableOpponentAi against OUR OWN slot.
+    // Same opcode (0xFAE6B64D) and same subscriber-fan-out mechanism that
+    // makes DisableOpponentAi work — but flipped to target:
+    //   buf[0] = mySide  (our team, not opponent)
+    //   buf[1] = ourSlot (g_ourPlayerId, not 0..10 opponent loop)
+    //   buf[3] = ourSlot mirror
+    //   buf[24..] = "ZH_GONE_" gamertag (recognizable in logs vs BOT add)
+    // Hypothesis: UI subscribers render our slot as a bot / empty / gone,
+    // visibly "removing us from the lobby" without our session actually
+    // leaving. If peer's state-side still treats us as playing while UI
+    // shows us as gone, we have an invisible-hijack primitive.
+    // ONE packet (not 11) — single-slot experiment.
+    bool SendRemoveSelf();
+
     // Test: fire a single 0xE81D3B4C packet with payload {0, 0, 1} (sz=12,
     // slot=0xFF, param7=0). Hypothesis: this is the AI-driver heartbeat /
     // takeover-ACK packet that the peer expects after a natural AFK

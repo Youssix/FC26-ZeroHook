@@ -681,6 +681,74 @@ bool ai_control::SendDisableOpponentAi()
     return false;
 }
 
+bool ai_control::SendRemoveSelf()
+{
+    // Experiment A — mirror SendDisableOpponentAi but target OUR own slot.
+    // Same 0xFAE6B64D opcode, same 0x38 payload shape, same dispatcher
+    // path. Only the target fields flip: mySide + g_ourPlayerId instead of
+    // oppSide + loop(0..10). Gamertag "ZH_GONE_" makes it identifiable in
+    // log diffs vs the BOT add fires.
+    if (!g_playerIdCaptured) {
+        toast::Show(toast::Type::Error, "RemoveSelf: ourPlayerId not captured");
+        return false;
+    }
+
+    uintptr_t rcx = 0;
+    rage::dispatch_fn_t fn = nullptr;
+    if (!rage::get_dispatch(rcx, fn)) {
+        log::debug("[AI] RemoveSelf: get_dispatch failed\r\n");
+        toast::Show(toast::Type::Error, "RemoveSelf: dispatcher unavailable");
+        return false;
+    }
+
+    uintptr_t ctx = GetMatchCtx();
+    if (!ctx) {
+        toast::Show(toast::Type::Error, "RemoveSelf: no match ctx");
+        return false;
+    }
+
+    uint32_t mySide = 0xFFFFFFFFu;
+    __try { mySide = *reinterpret_cast<uint32_t*>(ctx + 0x23D4); }
+    __except (EXCEPTION_EXECUTE_HANDLER) {}
+    if (mySide != 0 && mySide != 1) {
+        toast::Show(toast::Type::Error, "RemoveSelf: mySide invalid");
+        return false;
+    }
+
+    uint64_t opcode = 0xFAE6B64DULL;
+    uint8_t  buf[0x38];
+    __stosb(reinterpret_cast<unsigned char*>(buf), 0, 0x38);
+
+    buf[0] = static_cast<uint8_t>(mySide);
+    buf[1] = static_cast<uint8_t>(g_ourPlayerId);
+    buf[2] = 0xFF;
+    buf[3] = static_cast<uint8_t>(g_ourPlayerId);
+
+    // gamertag "ZH_GONE_" (8 bytes) at offset 24
+    static const unsigned char kGoneTag[] = { 'Z','H','_','G','O','N','E','_' };
+    for (int i = 0; i < 8; ++i) buf[24 + i] = kGoneTag[i];
+
+    bool ok = false;
+    hook::g_allow_attack_send = true;
+    __try {
+        spoof_call(fn, (uint64_t)rcx,
+                   (uint64_t*)&opcode, (uint64_t*)&opcode,
+                   (void*)buf, (int)0x38, (char)0xFF, (unsigned char)0);
+        ok = true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { ok = false; }
+    hook::g_allow_attack_send = false;
+
+    char lb[192];
+    fmt::snprintf(lb, sizeof(lb),
+        "[AI] RemoveSelf: 0xFAE6B64D mySide=%u ourSlot=%u tag=ZH_GONE_ ok=%d\r\n",
+        mySide, static_cast<uint32_t>(g_ourPlayerId), ok ? 1 : 0);
+    log::debug(lb);
+
+    if (ok) toast::Show(toast::Type::Success, "RemoveSelf fired (1 pkt)");
+    else    toast::Show(toast::Type::Error, "RemoveSelf threw");
+    return ok;
+}
+
 bool ai_control::FireAiHeartbeat()
 {
     // Payload guess based on working-tool log diff: 12 bytes, {0, 0, 1}.

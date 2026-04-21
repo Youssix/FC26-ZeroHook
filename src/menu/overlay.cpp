@@ -1126,104 +1126,16 @@ void overlay::Frame(float screenW, float screenH)
                     (bool*)&settings::g_traceOpcodes,
                     "Log every inbound RouteGameMessage opcode (minus 4 framing opcodes) to zerohook.log. Toggle live — no restart. OFF by default.");
 
-                CustomMenu::g_menu.Toggle("Deep Hook AI Takeover",
-                    (bool*)&ai_control::g_deepHookAiTakeover,
-                    "Hook-based approach: intercept AFK_DECISION_BRAIN calls, set matchCtx[0x2554]=1 for our slots, let the brain naturally take its fast path. Toggle live.");
-
-                // Edge-detected byte-patch toggle. Applies / removes the
-                // EPT patch on the state transition (not every frame).
-                static bool s_lastForceAfk = false;
-                CustomMenu::g_menu.Toggle("Force AFK Path (byte patch)",
-                    (bool*)&ai_control::g_forceAfkPath,
-                    "EPT byte-patches sub_14282BB00 at 0x14282BF0A (jz short -> nop nop) so whenever the brain reaches its fast-path block, FnAfkTakeover is always called. Zero hook overhead. Normal brain gates (CPU_VS_CPU / matchCtx+0x2557 / NOIDLE / NOIDLEREMOVE) still apply.");
-                if ((bool)ai_control::g_forceAfkPath != s_lastForceAfk) {
-                    s_lastForceAfk = (bool)ai_control::g_forceAfkPath;
-                    ai_control::ApplyForceAfkPath(s_lastForceAfk);
-                }
-
-                // Force State Machine Enter — patch sub_1489A9CE0 @ 0x1489A9EBA
-                // (6-byte jnz -> 6 NOPs) so the first event at phase 0 falls
-                // through to the natural sub_1427FA200(matchCtx, 0, 0) Enter.
-                // Same code path a real AFK event runs; peer-identical traffic.
-                static bool s_lastForceStateEnter = false;
-                CustomMenu::g_menu.Toggle("Force State Machine Enter (byte patch)",
-                    (bool*)&ai_control::g_forceStateMachineEnter,
-                    "EPT byte-patches sub_1489A9CE0 at 0x1489A9EBA (jnz +0xB4 -> 6 NOPs) so the ONLINE_CPU_CONTROL state machine dispatches sub_1427FA200(matchCtx,0,0) on the first event at phase 0. Uses the game's own natural AFK-takeover path — peer-identical traffic. Requires ONLINE_CPU_CONTROL registry NOT set (default).");
-                if ((bool)ai_control::g_forceStateMachineEnter != s_lastForceStateEnter) {
-                    s_lastForceStateEnter = (bool)ai_control::g_forceStateMachineEnter;
-                    ai_control::ApplyForceStateMachineEnter(s_lastForceStateEnter);
-                }
-
-                // One-shot test buttons for the 0xE81D3B4C hypothesis.
-                // Each button fires a single packet with a different payload
-                // flavor seen in the working-takeover logs.
+                // Experiment A — mirror of SendDisableOpponentAi flipped
+                // against our own slot. Same 0xFAE6B64D subscriber-fan-out
+                // mechanism that makes DisableOpponentAi work. If peer UI
+                // renders us as gone while our session stays alive, we have
+                // an invisible-hijack path.
                 if (CustomMenu::g_menu.ButtonColored(
-                        "Fire 0xE81D3B4C {0,0,1}",
-                        CustomMenu::Colors::Primary, -1, 28))
+                        "Remove Self (0xFAE6B64D mirror)",
+                        CustomMenu::Colors::Warning, -1, 32))
                 {
-                    __try { ai_control::FireAiHeartbeat(); }
-                    __except (EXCEPTION_EXECUTE_HANDLER) {}
-                }
-                if (CustomMenu::g_menu.ButtonColored(
-                        "Fire 0xE81D3B4C {1.0f,1.0f,1}",
-                        CustomMenu::Colors::Primary, -1, 28))
-                {
-                    __try { ai_control::FireAiInputAnnounce(); }
-                    __except (EXCEPTION_EXECUTE_HANDLER) {}
-                }
-
-                // 0xA2CB726E flavors — controller-reassign packet. The
-                // game's own natural AFK takeover uses the sentinel form.
-                if (CustomMenu::g_menu.ButtonColored(
-                        "A2CB726E {FFFFFFFF, cap, 0} sentinel",
-                        CustomMenu::Colors::Success, -1, 28))
-                {
-                    __try { ai_control::FireA2CBSentinel(); }
-                    __except (EXCEPTION_EXECUTE_HANDLER) {}
-                }
-                if (CustomMenu::g_menu.ButtonColored(
-                        "A2CB726E {mySide, cap, 0} home-team",
-                        CustomMenu::Colors::Success, -1, 28))
-                {
-                    __try { ai_control::FireA2CBTeamHome(); }
-                    __except (EXCEPTION_EXECUTE_HANDLER) {}
-                }
-                if (CustomMenu::g_menu.ButtonColored(
-                        "A2CB726E {oppSide, cap, 0} opp-team",
-                        CustomMenu::Colors::Warning, -1, 28))
-                {
-                    __try { ai_control::FireA2CBTeamOpp(); }
-                    __except (EXCEPTION_EXECUTE_HANDLER) {}
-                }
-                if (CustomMenu::g_menu.ButtonColored(
-                        "A2CB726E 22-slot sweep {FFFFFFFF, k, 0}",
-                        CustomMenu::Colors::Secondary, -1, 28))
-                {
-                    __try { ai_control::FireA2CBFullSweep(); }
-                    __except (EXCEPTION_EXECUTE_HANDLER) {}
-                }
-
-                // The cleanest natural-path test: call the game's own
-                // FnAfkTakeover directly with (matchCtx, captain, 0, 1).
-                // It fires all three takeover packets in the correct order,
-                // with whatever internal state the function itself produces
-                // — matching what happens when the AFK brain fires naturally.
-                if (CustomMenu::g_menu.ButtonColored(
-                        "Call FnAfkTakeover(ctx, cap, 0, 1)",
-                        CustomMenu::Colors::Primary, -1, 28))
-                {
-                    __try { ai_control::CallFnAfkTakeover(); }
-                    __except (EXCEPTION_EXECUTE_HANDLER) {}
-                }
-
-                // THE RECIPE — sub_14281B970 direct call with our own
-                // {team, player}. Peer accepts because owner match passes,
-                // no AI-driver enable needed (peer runs its own AI).
-                if (CustomMenu::g_menu.ButtonColored(
-                        "Claim My Slot (sub_14281B970)",
-                        CustomMenu::Colors::Success, -1, 32))
-                {
-                    __try { ai_control::ClaimMySlot(); }
+                    __try { ai_control::SendRemoveSelf(); }
                     __except (EXCEPTION_EXECUTE_HANDLER) {}
                 }
                 CustomMenu::g_menu.EndSection();
