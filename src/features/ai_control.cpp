@@ -611,37 +611,33 @@ bool ai_control::SendDisableOpponentAi()
     //                        window the user asked to automate.
     // With these gates, the menu toggle can stay on across matches and
     // the spoof will fire exactly once per match, automatically.
+    // Silent-gate sequence: this function is called PER-FRAME while the
+    // toggle is on, so every pre-condition failure must silently return
+    // (no toasts, no log spam). Only log/toast on actual SEND outcome
+    // once all gates pass — happens exactly once per match thanks to
+    // g_rosterSpoofFired latch.
     if (g_rosterSpoofFired) return false;
     if (!g_playerIdCaptured) return false;
 
-    uintptr_t rcx = 0;
-    rage::dispatch_fn_t fn = nullptr;
-    if (!rage::get_dispatch(rcx, fn)) {
-        log::debug("[AI] RosterSpoof: get_dispatch failed\r\n");
-        toast::Show(toast::Type::Error, "RosterSpoof: dispatcher unavailable");
-        return false;
-    }
-
-    // LOG-VERIFIED payload structure from disable_vs_ai_2.log working attack:
-    //   buf[0] = team (0=HOME, 1=AWAY)    ← THE SIDE FIELD
-    //   buf[1] = slot 0..0xA (per-team)   ← NOT global 0..21
-    //   buf[2] = 0xFF
-    //   buf[3] = slot mirror
-    // Slots are PER-TEAM indices, not global. Earlier slotBase offset
-    // (0 for HOME, 11 for AWAY) was incorrect — reverted.
     uintptr_t ctx = GetMatchCtx();
-    if (!ctx) {
-        toast::Show(toast::Type::Error, "RosterSpoof: no match ctx");
-        return false;
-    }
+    if (!ctx) return false;
+
+    // Extra gate: match must be fully loaded and live. Otherwise
+    // matchCtx+0x23D4 holds garbage/stale value from a prior session.
+    uint8_t inActiveGameplay = 0;
+    __try { inActiveGameplay = *reinterpret_cast<uint8_t*>(ctx + 0x4AD0); }
+    __except (EXCEPTION_EXECUTE_HANDLER) {}
+    if (!inActiveGameplay) return false;
+
     uint32_t mySide = 0xFFFFFFFFu;
     __try { mySide = *reinterpret_cast<uint32_t*>(ctx + 0x23D4); }
     __except (EXCEPTION_EXECUTE_HANDLER) {}
-    if (mySide != 0 && mySide != 1) {
-        toast::Show(toast::Type::Error, "RosterSpoof: mySide invalid");
-        return false;
-    }
+    if (mySide != 0 && mySide != 1) return false;
     const uint8_t oppSide = static_cast<uint8_t>(1u - mySide);
+
+    uintptr_t rcx = 0;
+    rage::dispatch_fn_t fn = nullptr;
+    if (!rage::get_dispatch(rcx, fn)) return false;
 
     uint64_t opcode = 0xFAE6B64DULL;
     uint8_t  buf[0x38];
