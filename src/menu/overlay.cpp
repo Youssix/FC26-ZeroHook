@@ -1138,6 +1138,23 @@ void overlay::Frame(float screenW, float screenH)
                     __try { ai_control::SendRemoveSelf(); }
                     __except (EXCEPTION_EXECUTE_HANDLER) {}
                 }
+
+                // Forced-team spoof variants (test which buf[0] actually
+                // controls team rendering on peer).
+                if (CustomMenu::g_menu.ButtonColored(
+                        "Spoof team=0 HOME (buf[0]=0x00)",
+                        CustomMenu::Colors::Primary, -1, 28))
+                {
+                    __try { ai_control::SendDisableOppAi_ForceHome(); }
+                    __except (EXCEPTION_EXECUTE_HANDLER) {}
+                }
+                if (CustomMenu::g_menu.ButtonColored(
+                        "Spoof team=1 AWAY (buf[0]=0x01)",
+                        CustomMenu::Colors::Primary, -1, 28))
+                {
+                    __try { ai_control::SendDisableOppAi_ForceAway(); }
+                    __except (EXCEPTION_EXECUTE_HANDLER) {}
+                }
                 CustomMenu::g_menu.EndSection();
             }
         }

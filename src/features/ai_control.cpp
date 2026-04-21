@@ -622,7 +622,13 @@ bool ai_control::SendDisableOpponentAi()
         return false;
     }
 
-    // Read mySide from matchCtx+0x23D4 (authoritative).
+    // LOG-VERIFIED payload structure from disable_vs_ai_2.log working attack:
+    //   buf[0] = team (0=HOME, 1=AWAY)    ← THE SIDE FIELD
+    //   buf[1] = slot 0..0xA (per-team)   ← NOT global 0..21
+    //   buf[2] = 0xFF
+    //   buf[3] = slot mirror
+    // Slots are PER-TEAM indices, not global. Earlier slotBase offset
+    // (0 for HOME, 11 for AWAY) was incorrect — reverted.
     uintptr_t ctx = GetMatchCtx();
     if (!ctx) {
         toast::Show(toast::Type::Error, "RosterSpoof: no match ctx");
@@ -636,16 +642,6 @@ bool ai_control::SendDisableOpponentAi()
         return false;
     }
     const uint8_t oppSide = static_cast<uint8_t>(1u - mySide);
-
-    // KEY INSIGHT (user verified live): buf[0] (team field) doesn't
-    // actually control which team the peer renders the ghost on — the
-    // peer's UI subscriber picks the team from the SLOT INDEX RANGE:
-    //   buf[1] ∈ 0..10  → HOME team
-    //   buf[1] ∈ 11..21 → AWAY team
-    // Previous code iterated buf[1] = 1..9 unconditionally → always
-    // landed on HOME regardless of oppSide. Fix: offset slot base by
-    // opp's team position.
-    const uint8_t slotBase = (oppSide == 1) ? 11u : 0u;
 
     uint64_t opcode = 0xFAE6B64DULL;
     uint8_t  buf[0x38];
@@ -664,19 +660,17 @@ bool ai_control::SendDisableOpponentAi()
     //      their captain visible while 9 non-captain slots still fill
     //      with ghost bots.
     hook::g_allow_attack_send = true;
-    for (uint8_t k = 1; k < 0x0A; ++k) {
-        const uint8_t slot = slotBase + k;  // 1..9 for HOME opp, 12..20 for AWAY opp
+    for (uint8_t slot = 1; slot < 0x0A; ++slot) {
         __stosb(reinterpret_cast<unsigned char*>(buf), 0, 0x38);
 
-        buf[0] = oppSide;
-        buf[1] = slot;
+        buf[0] = oppSide;          // team — LOG-CONFIRMED selects HOME(0)/AWAY(1)
+        buf[1] = slot;             // per-team slot 1..9 (skip captain at 0)
         buf[2] = 0xFF;
-        buf[3] = slot;
+        buf[3] = slot;             // mirror
 
-        // gamertag "ZH_BOT_" + hex slot-within-team (1..9)
         static const unsigned char kPrefix[] = { 'Z','H','_','B','O','T','_' };
         for (int i = 0; i < 7; ++i) buf[24 + i] = kPrefix[i];
-        buf[24 + 7] = static_cast<uint8_t>('0' + k);
+        buf[24 + 7] = static_cast<uint8_t>('0' + slot);
 
         __try {
             spoof_call(fn, (uint64_t)rcx,
@@ -688,9 +682,8 @@ bool ai_control::SendDisableOpponentAi()
     hook::g_allow_attack_send = false;
 
     log::debugf(
-        "[AI] RosterSpoof: 0xFAE6B64D playerside=%d mySide=%u oppSide=%u slotBase=%u (slots %u..%u, captain skipped) sent=%d threw=%d\r\n",
-        sliders::playerside, mySide, oppSide, slotBase,
-        slotBase + 1, slotBase + 9, sent, threw);
+        "[AI] RosterSpoof: 0xFAE6B64D playerside=%d mySide=%u oppSide=%u (slots 1..9 per-team, captain skipped) sent=%d threw=%d\r\n",
+        sliders::playerside, mySide, oppSide, sent, threw);
 
     if (sent == 9 && threw == 0) {
         g_rosterSpoofFired = true;
@@ -698,6 +691,63 @@ bool ai_control::SendDisableOpponentAi()
         return true;
     }
     toast::Show(toast::Type::Error, "Roster spoof partial/failed");
+    return false;
+}
+
+// Shared helper — spoof against a specific team index (0=HOME, 1=AWAY),
+// slots 1..9 per-team (skip captain). Returns count of packets sent.
+// Used by the forced-team test buttons below.
+static int RosterSpoof_Team(uint8_t teamIdx, const char* tagBase)
+{
+    uintptr_t rcx = 0;
+    rage::dispatch_fn_t fn = nullptr;
+    if (!rage::get_dispatch(rcx, fn)) {
+        toast::Show(toast::Type::Error, "RosterSpoof: dispatcher unavailable");
+        return 0;
+    }
+    uint64_t opcode = 0xFAE6B64DULL;
+    uint8_t  buf[0x38];
+    int sent = 0, threw = 0;
+
+    hook::g_allow_attack_send = true;
+    for (uint8_t slot = 1; slot < 0x0A; ++slot) {
+        __stosb(reinterpret_cast<unsigned char*>(buf), 0, 0x38);
+        buf[0] = teamIdx;
+        buf[1] = slot;
+        buf[2] = 0xFF;
+        buf[3] = slot;
+
+        // 7-char prefix + 1-char slot suffix
+        for (int i = 0; i < 7; ++i) buf[24 + i] = (unsigned char)tagBase[i];
+        buf[24 + 7] = static_cast<uint8_t>('0' + slot);
+
+        __try {
+            spoof_call(fn, (uint64_t)rcx,
+                       (uint64_t*)&opcode, (uint64_t*)&opcode,
+                       (void*)buf, (int)0x38, (char)0xFF, (unsigned char)0);
+            ++sent;
+        } __except (EXCEPTION_EXECUTE_HANDLER) { ++threw; }
+    }
+    hook::g_allow_attack_send = false;
+
+    log::debugf("[AI] RosterSpoof_Team: buf[0]=%u sent=%d threw=%d tag=%s\r\n",
+                teamIdx, sent, threw, tagBase);
+    return (threw == 0) ? sent : 0;
+}
+
+bool ai_control::SendDisableOppAi_ForceHome()
+{
+    int n = RosterSpoof_Team(0, "ZH_HOM_");
+    if (n == 9) { toast::Show(toast::Type::Success, "Spoof team=0 HOME fired (9 pkts)"); return true; }
+    toast::Show(toast::Type::Error, "Spoof team=0 HOME failed");
+    return false;
+}
+
+bool ai_control::SendDisableOppAi_ForceAway()
+{
+    int n = RosterSpoof_Team(1, "ZH_AWY_");
+    if (n == 9) { toast::Show(toast::Type::Success, "Spoof team=1 AWAY fired (9 pkts)"); return true; }
+    toast::Show(toast::Type::Error, "Spoof team=1 AWAY failed");
     return false;
 }
 

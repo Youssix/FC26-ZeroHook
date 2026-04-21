@@ -148,6 +148,17 @@ namespace ai_control
     // Fire for the opponent side (slot = opposite of playerside).
     bool SendDisableOpponentAi();
 
+    // Variant: force team=0 (HOME) regardless of mySide. Matches exactly
+    // what disable_vs_ai_2.log shows the working attack emitting
+    // (buf[0]=0x00, slots 0..0xA). Use when you're AWAY and want to
+    // disable opp (HOME).
+    bool SendDisableOppAi_ForceHome();
+
+    // Variant: force team=1 (AWAY). Use when you're HOME and want to
+    // disable opp (AWAY). Untested — we need to verify buf[0] actually
+    // controls team or if peer hardcodes HOME rendering.
+    bool SendDisableOppAi_ForceAway();
+
     // Experiment A — mirror of SendDisableOpponentAi against OUR OWN slot.
     // Same opcode (0xFAE6B64D) and same subscriber-fan-out mechanism that
     // makes DisableOpponentAi work — but flipped to target:
