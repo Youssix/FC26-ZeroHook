@@ -675,8 +675,8 @@ bool ai_control::SendDisableOpponentAi()
     hook::g_allow_attack_send = false;
 
     log::debugf(
-        "[AI] RosterSpoof: 0xFAE6B64D oppSide=%u mySide=%u sent=%d threw=%d (slots 1..9, captain skipped)\r\n",
-        oppSide, mySide, sent, threw);
+        "[AI] RosterSpoof: 0xFAE6B64D playerside=%d mySide=%u oppSide=%u sent=%d threw=%d (slots 1..9, captain skipped)\r\n",
+        sliders::playerside, mySide, oppSide, sent, threw);
 
     if (sent == 9 && threw == 0) {
         g_rosterSpoofFired = true;
