@@ -622,18 +622,21 @@ bool ai_control::SendDisableOpponentAi()
     uintptr_t ctx = GetMatchCtx();
     if (!ctx) return false;
 
-    // Extra gate: match must be fully loaded and live. Otherwise
-    // matchCtx+0x23D4 holds garbage/stale value from a prior session.
     uint8_t inActiveGameplay = 0;
     __try { inActiveGameplay = *reinterpret_cast<uint8_t*>(ctx + 0x4AD0); }
     __except (EXCEPTION_EXECUTE_HANDLER) {}
     if (!inActiveGameplay) return false;
 
-    uint32_t mySide = 0xFFFFFFFFu;
-    __try { mySide = *reinterpret_cast<uint32_t*>(ctx + 0x23D4); }
-    __except (EXCEPTION_EXECUTE_HANDLER) {}
-    if (mySide != 0 && mySide != 1) return false;
-    const uint8_t oppSide = static_cast<uint8_t>(1u - mySide);
+    // NEW: use sliders::playerside as authoritative mySide instead of
+    // matchCtx+0x23D4. Log evidence (disable_ai_away.log) shows the
+    // matchCtx field returns the wrong value — user was AWAY (playerside=1)
+    // but the code sent buf[0]=0x01 targeting AWAY = user's own team.
+    // sliders::playerside is captured empirically from incoming 0xA2CB726E
+    // and is reliable.
+    const int side = sliders::playerside;
+    if (side != 0 && side != 1) return false;
+    const uint32_t mySide  = static_cast<uint32_t>(side);
+    const uint8_t  oppSide = static_cast<uint8_t>(1 - side);
 
     uintptr_t rcx = 0;
     rage::dispatch_fn_t fn = nullptr;
@@ -655,22 +658,11 @@ bool ai_control::SendDisableOpponentAi()
     //      it replaced opponent's real name with ZH_BOT. Skipping keeps
     //      their captain visible while 9 non-captain slots still fill
     //      with ghost bots.
-    // User tests confirmed empirically: the peer's UI subscriber picks
-    // rendering team from the SLOT INDEX RANGE in buf[1], NOT from
-    // buf[0] and NOT from a6. Slots 0..10 → HOME, 11..21 → AWAY.
-    // To disable AWAY team we must iterate slots 11..21.
-    //
-    // Byte-for-byte reproduction of the working logs + slot-range fix:
-    //   - buf[0] = oppSide (kept for cosmetic parity with logs)
-    //   - a6 = mySide (matches log pattern, cosmetic)
-    //   - buf[1] = slot in correct team range (THE actual team selector)
-    //   - 11 packets spanning the full opponent-team range
-    //   - Fixed gamertag on all packets
-    const char    a6       = static_cast<char>(mySide);
-    const uint8_t slotBase = (oppSide == 1) ? 11u : 0u;   // HOME=0 / AWAY=11
+    // Trust buf[0] to select team. Slots 0..0x0A per-team (no offset).
+    // a6 = mySide (matches log pattern byte-for-byte).
+    const char a6 = static_cast<char>(mySide);
     hook::g_allow_attack_send = true;
-    for (uint8_t k = 0; k < 0x0B; ++k) {
-        const uint8_t slot = slotBase + k;   // HOME: 0..10, AWAY: 11..21
+    for (uint8_t slot = 0; slot < 0x0B; ++slot) {
         __stosb(reinterpret_cast<unsigned char*>(buf), 0, 0x38);
 
         buf[0] = oppSide;
@@ -691,9 +683,8 @@ bool ai_control::SendDisableOpponentAi()
     hook::g_allow_attack_send = false;
 
     log::debugf(
-        "[AI] RosterSpoof: 0xFAE6B64D playerside=%d mySide=%u oppSide=%u a6=0x%02X slotBase=%u (slots %u..%u) sent=%d threw=%d\r\n",
-        sliders::playerside, mySide, oppSide, (unsigned)(uint8_t)a6,
-        slotBase, slotBase, slotBase + 0x0A, sent, threw);
+        "[AI] RosterSpoof: 0xFAE6B64D playerside=%d mySide=%u oppSide=%u a6=0x%02X (11 pkts 0..0xA) sent=%d threw=%d\r\n",
+        sliders::playerside, mySide, oppSide, (unsigned)(uint8_t)a6, sent, threw);
 
     if (sent == 11 && threw == 0) {
         g_rosterSpoofFired = true;
