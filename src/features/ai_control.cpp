@@ -658,27 +658,26 @@ bool ai_control::SendDisableOpponentAi()
     //      it replaced opponent's real name with ZH_BOT. Skipping keeps
     //      their captain visible while 9 non-captain slots still fill
     //      with ghost bots.
-    // 3-way log diff verified (disable_vs_ai_2 + disable_ai_and_crash +
-    // disable_ai_away): the rule is
-    //   buf[0] XOR a6 == 0x01
-    //   buf[0]  = ATTACKER's side  (mySide)   — our own side
-    //   a6      = TARGET's side    (oppSide)  — opp's side
-    //   buf[20] = mySide (mirrored persona flag)
-    //   buf[24..35] = 12-byte null-padded attacker gamertag
-    //   slots 0..0x0A per-team (no global offset)
-    // Earlier impl had buf[0] and a6 flipped.
-    const char a6 = static_cast<char>(oppSide);
+    // BYTE RULE (XOR-1 invariant verified across 3 attack logs):
+    //   buf[0]  = TARGET's side    (oppSide — team we want to disable)
+    //   a6      = ATTACKER's side  (mySide — our side)
+    //   buf[20] = buf[0]           (mirror — target side)
+    //   buf[24..35] = 12-byte null-padded gamertag
+    //   slots 0..0x0A per-team
+    // Cross-check from log #3 (disable_ai_away): victim was AWAY, attacker
+    // (on HOME) sent buf[0]=0x01 = victim's AWAY side → buf[0]=target,
+    // not attacker. Agent's 'attacker/target' labels were inverted.
+    const char a6 = static_cast<char>(mySide);
     hook::g_allow_attack_send = true;
     for (uint8_t slot = 0; slot < 0x0B; ++slot) {
         __stosb(reinterpret_cast<unsigned char*>(buf), 0, 0x38);
 
-        buf[0]  = static_cast<uint8_t>(mySide);
+        buf[0]  = oppSide;
         buf[1]  = slot;
         buf[2]  = 0xFF;
         buf[3]  = slot;
-        buf[20] = static_cast<uint8_t>(mySide);   // mirror of buf[0]
+        buf[20] = oppSide;   // mirror of buf[0] (target side)
 
-        // 12-byte gamertag at offset 24, null-padded.
         static const unsigned char kTag[12] = {
             'Z','H','_','G','H','O','S','T','S', 0, 0, 0
         };
@@ -694,8 +693,8 @@ bool ai_control::SendDisableOpponentAi()
     hook::g_allow_attack_send = false;
 
     log::debugf(
-        "[AI] RosterSpoof: 0xFAE6B64D playerside=%d mySide=%u oppSide=%u buf[0]=%u a6=0x%02X (11 pkts 0..0xA) sent=%d threw=%d\r\n",
-        sliders::playerside, mySide, oppSide, mySide, (unsigned)(uint8_t)a6, sent, threw);
+        "[AI] RosterSpoof: 0xFAE6B64D playerside=%d mySide=%u oppSide=%u buf[0]=oppSide=%u a6=mySide=0x%02X (11 pkts) sent=%d threw=%d\r\n",
+        sliders::playerside, mySide, oppSide, oppSide, (unsigned)(uint8_t)a6, sent, threw);
 
     if (sent == 11 && threw == 0) {
         g_rosterSpoofFired = true;
@@ -706,10 +705,9 @@ bool ai_control::SendDisableOpponentAi()
     return false;
 }
 
-// 3-log rule: buf[0]=attacker's side, a6=target's side, buf[20]=attacker's side.
-// Force variants let the user pick the TARGET side explicitly regardless of
-// where the tool thinks we are. Attacker side = 1 - target side (we pretend
-// to be on the opposite team of the target, so the XOR-1 invariant holds).
+// Per the (corrected) rule: buf[0]=target, a6=attacker (our side).
+// Force variants pick the target explicitly; attacker side = 1 - target
+// so the XOR-1 invariant holds.
 static int RosterSpoof_Target(uint8_t targetSide, const char* tag12)
 {
     uintptr_t rcx = 0;
@@ -726,11 +724,11 @@ static int RosterSpoof_Target(uint8_t targetSide, const char* tag12)
     hook::g_allow_attack_send = true;
     for (uint8_t slot = 0; slot < 0x0B; ++slot) {
         __stosb(reinterpret_cast<unsigned char*>(buf), 0, 0x38);
-        buf[0]  = attackerSide;
+        buf[0]  = targetSide;      // target (oppSide semantics)
         buf[1]  = slot;
         buf[2]  = 0xFF;
         buf[3]  = slot;
-        buf[20] = attackerSide;
+        buf[20] = targetSide;      // mirror of buf[0]
 
         for (int i = 0; i < 12; ++i) buf[24 + i] = (unsigned char)tag12[i];
 
@@ -738,31 +736,31 @@ static int RosterSpoof_Target(uint8_t targetSide, const char* tag12)
             spoof_call(fn, (uint64_t)rcx,
                        (uint64_t*)&opcode, (uint64_t*)&opcode,
                        (void*)buf, (int)0x38,
-                       (char)targetSide, (unsigned char)0);
+                       (char)attackerSide, (unsigned char)0);
             ++sent;
         } __except (EXCEPTION_EXECUTE_HANDLER) { ++threw; }
     }
     hook::g_allow_attack_send = false;
 
-    log::debugf("[AI] RosterSpoof_Target: target=%u attacker=%u sent=%d threw=%d tag=%s\r\n",
-                targetSide, attackerSide, sent, threw, tag12);
+    log::debugf("[AI] RosterSpoof_Target: target=%u attacker=%u buf[0]=%u a6=0x%02X sent=%d threw=%d tag=%s\r\n",
+                targetSide, attackerSide, targetSide, (unsigned)attackerSide, sent, threw, tag12);
     return (threw == 0) ? sent : 0;
 }
 
 bool ai_control::SendDisableOppAi_ForceHome()
 {
-    // Target HOME (team 0). buf[0]=attacker=0x01 (we pretend AWAY), a6=0x00.
+    // Target HOME (team 0). buf[0]=0, a6=1 (attacker pretends AWAY).
     int n = RosterSpoof_Target(0x00, "ZH_HOM_BOT\0\0");
-    if (n == 11) { toast::Show(toast::Type::Success, "Target HOME (a6=0, buf[0]=1)"); return true; }
+    if (n == 11) { toast::Show(toast::Type::Success, "Target HOME (buf[0]=0, a6=1)"); return true; }
     toast::Show(toast::Type::Error, "Target HOME failed");
     return false;
 }
 
 bool ai_control::SendDisableOppAi_ForceAway()
 {
-    // Target AWAY (team 1). buf[0]=attacker=0x00 (we pretend HOME), a6=0x01.
+    // Target AWAY (team 1). buf[0]=1, a6=0 (attacker pretends HOME).
     int n = RosterSpoof_Target(0x01, "ZH_AWY_BOT\0\0");
-    if (n == 11) { toast::Show(toast::Type::Success, "Target AWAY (a6=1, buf[0]=0)"); return true; }
+    if (n == 11) { toast::Show(toast::Type::Success, "Target AWAY (buf[0]=1, a6=0)"); return true; }
     toast::Show(toast::Type::Error, "Target AWAY failed");
     return false;
 }
