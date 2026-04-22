@@ -63,6 +63,15 @@ namespace toast
     // ── Tick + Render (call once per frame) ──
     inline void Render(D3D12Renderer& renderer, float screenW, float screenH, float dt)
     {
+        // Honor the "Show Notifications" toggle live: if the user flipped it
+        // off while toasts were still on screen, expire them immediately and
+        // skip drawing. Without this, Show() blocks new toasts but already-
+        // active ones keep rendering until natural fade-out (~4.3s).
+        if (!g_enabled) {
+            for (int i = 0; i < MAX_TOASTS; i++) g_toasts[i].active = false;
+            return;
+        }
+
         // Count active toasts to stack from bottom
         int visCount = 0;
 
