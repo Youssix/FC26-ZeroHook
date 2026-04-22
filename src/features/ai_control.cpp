@@ -648,16 +648,6 @@ bool ai_control::SendDisableOpponentAi()
     int sent  = 0;
     int threw = 0;
 
-    // Loop slots 1..9 (9 iterations). Two fixes from earlier:
-    //   1. Off-by-one: previous bound `slot <= 0x0A` = 11 iterations. Native
-    //      FnNativeRosterSender_FAE6B64D loops `i < 0xA` = 10 iterations.
-    //      The extra 11th packet at slot=10 was out-of-range and stomping
-    //      the opponent's team display header (likely why their name was
-    //      disappearing entirely).
-    //   2. Skip slot 0 — opponent's captain display position. Overwriting
-    //      it replaced opponent's real name with ZH_BOT. Skipping keeps
-    //      their captain visible while 9 non-captain slots still fill
-    //      with ghost bots.
     // BYTE RULE (XOR-1 invariant verified across 3 attack logs):
     //   buf[0]  = TARGET's side    (oppSide — team we want to disable)
     //   a6      = ATTACKER's side  (mySide — our side)
