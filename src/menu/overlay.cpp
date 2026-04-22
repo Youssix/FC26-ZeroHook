@@ -1160,42 +1160,15 @@ void overlay::Frame(float screenW, float screenH)
                 CustomMenu::g_menu.EndSection();
             }
 
-            if (CustomMenu::g_menu.BeginSection("Debug Logging"))
+            if constexpr (g_debugLog)
             {
-                CustomMenu::g_menu.Toggle("Trace Opcodes",
-                    (bool*)&settings::g_traceOpcodes,
-                    "Log every inbound RouteGameMessage opcode (minus 4 framing opcodes) to zerohook.log. Toggle live — no restart. OFF by default.");
-
-                // Experiment A — mirror of SendDisableOpponentAi flipped
-                // against our own slot. Same 0xFAE6B64D subscriber-fan-out
-                // mechanism that makes DisableOpponentAi work. If peer UI
-                // renders us as gone while our session stays alive, we have
-                // an invisible-hijack path.
-                if (CustomMenu::g_menu.ButtonColored(
-                        "Remove Self (0xFAE6B64D mirror)",
-                        CustomMenu::Colors::Warning, -1, 32))
+                if (CustomMenu::g_menu.BeginSection("Debug Logging"))
                 {
-                    __try { ai_control::SendRemoveSelf(); }
-                    __except (EXCEPTION_EXECUTE_HANDLER) {}
+                    CustomMenu::g_menu.Toggle("Trace Opcodes",
+                        (bool*)&settings::g_traceOpcodes,
+                        "Log every inbound RouteGameMessage opcode (minus 4 framing opcodes) to zerohook.log. Toggle live — no restart. OFF by default.");
+                    CustomMenu::g_menu.EndSection();
                 }
-
-                // Forced-team spoof variants (test which buf[0] actually
-                // controls team rendering on peer).
-                if (CustomMenu::g_menu.ButtonColored(
-                        "Spoof team=0 HOME (buf[0]=0x00)",
-                        CustomMenu::Colors::Primary, -1, 28))
-                {
-                    __try { ai_control::SendDisableOppAi_ForceHome(); }
-                    __except (EXCEPTION_EXECUTE_HANDLER) {}
-                }
-                if (CustomMenu::g_menu.ButtonColored(
-                        "Spoof team=1 AWAY (buf[0]=0x01)",
-                        CustomMenu::Colors::Primary, -1, 28))
-                {
-                    __try { ai_control::SendDisableOppAi_ForceAway(); }
-                    __except (EXCEPTION_EXECUTE_HANDLER) {}
-                }
-                CustomMenu::g_menu.EndSection();
             }
         }
 

@@ -24,6 +24,7 @@
 // NoCRT-safe.
 
 #include "ai_control.h"
+#include "opponent_info.h"
 
 #include <Windows.h>
 #include "../offsets/offsets.h"
@@ -576,6 +577,9 @@ bool ai_control::SendAiTakeover()
     return true;
 }
 
+// Forward decl — definition below (after SendDisableOpponentAi).
+static void write_gamertag(uint8_t* buf, const char* fallback);
+
 bool ai_control::SendDisableOpponentAi()
 {
     // 0xFAE6B64D roster-spoof reproduction. Fires 11 forged player-
@@ -592,9 +596,13 @@ bool ai_control::SendDisableOpponentAi()
     //   buf[2]      = 0xFF
     //   buf[3]      = slotIdx  (mirror)
     //   buf[4..23]  = 0        (persona-id fields zero — no validator)
-    //   buf[24..47] = gamertag "ZH_BOT_0" .. "ZH_BOT_A" (distinctive
-    //                so the 11 ghost entries are visually recognisable
-    //                in the lobby roster)
+    //   buf[24..35] = 12-byte null-padded gamertag. Uses captured opponent
+    //                 name (opp_info::g_opponent.name) — victim-style
+    //                 replication matches the attack log shape where
+    //                 attackers mirror the victim's own gamertag across
+    //                 all 11 entries (PROLLYZAAA in disable_ai_and_crash.log
+    //                 @ line 8828+). Falls back to "ZH_GHOSTS" literal only
+    //                 until MatchFound hook populates opp_info.
     //   buf[48..55] = 0
     //
     // Sent through rage::get_dispatch() — identical pattern to
@@ -668,10 +676,7 @@ bool ai_control::SendDisableOpponentAi()
         buf[3]  = slot;
         buf[20] = oppSide;   // mirror of buf[0] (target side)
 
-        static const unsigned char kTag[12] = {
-            'Z','H','_','G','H','O','S','T','S', 0, 0, 0
-        };
-        for (int i = 0; i < 12; ++i) buf[24 + i] = kTag[i];
+        write_gamertag(buf, "ZH_GHOSTS");
 
         __try {
             spoof_call(fn, (uint64_t)rcx,
@@ -682,145 +687,34 @@ bool ai_control::SendDisableOpponentAi()
     }
     hook::g_allow_attack_send = false;
 
+    const char* tagUsed = (opp_info::g_opponent.valid && opp_info::g_opponent.name[0])
+                              ? opp_info::g_opponent.name : "ZH_GHOSTS";
     log::debugf(
-        "[AI] RosterSpoof: 0xFAE6B64D playerside=%d mySide=%u oppSide=%u buf[0]=oppSide=%u a6=mySide=0x%02X (11 pkts) sent=%d threw=%d\r\n",
-        sliders::playerside, mySide, oppSide, oppSide, (unsigned)(uint8_t)a6, sent, threw);
+        "[AI] RosterSpoof: 0xFAE6B64D playerside=%d mySide=%u oppSide=%u buf[0]=oppSide=%u a6=mySide=0x%02X tag=%s (11 pkts) sent=%d threw=%d\r\n",
+        sliders::playerside, mySide, oppSide, oppSide, (unsigned)(uint8_t)a6, tagUsed, sent, threw);
 
     if (sent == 11 && threw == 0) {
         g_rosterSpoofFired = true;
-        toast::Show(toast::Type::Success, "Roster spoof fired (11 pkts, exact-reproduction)");
         return true;
     }
-    toast::Show(toast::Type::Error, "Roster spoof partial/failed");
     return false;
 }
 
-// Per the (corrected) rule: buf[0]=target, a6=attacker (our side).
-// Force variants pick the target explicitly; attacker side = 1 - target
-// so the XOR-1 invariant holds.
-static int RosterSpoof_Target(uint8_t targetSide, const char* tag12)
+// Fill gamertag at buf[24..35] (12 bytes, null-padded). Uses the captured
+// opponent name (= the victim from their own perspective — attack logs
+// show attackers replicate the victim's own gamertag across all 11 ghost
+// entries, so the lobby reads as "that player filled multiple slots"
+// instead of a stranger spamming). Falls back to the supplied literal
+// tag until opp_info captures (pre-MatchFound window).
+static void write_gamertag(uint8_t* buf, const char* fallback)
 {
-    uintptr_t rcx = 0;
-    rage::dispatch_fn_t fn = nullptr;
-    if (!rage::get_dispatch(rcx, fn)) {
-        toast::Show(toast::Type::Error, "RosterSpoof: dispatcher unavailable");
-        return 0;
-    }
-    const uint8_t attackerSide = 1 - (targetSide & 1);
-    uint64_t opcode = 0xFAE6B64DULL;
-    uint8_t  buf[0x38];
-    int sent = 0, threw = 0;
-
-    hook::g_allow_attack_send = true;
-    for (uint8_t slot = 0; slot < 0x0B; ++slot) {
-        __stosb(reinterpret_cast<unsigned char*>(buf), 0, 0x38);
-        buf[0]  = targetSide;      // target (oppSide semantics)
-        buf[1]  = slot;
-        buf[2]  = 0xFF;
-        buf[3]  = slot;
-        buf[20] = targetSide;      // mirror of buf[0]
-
-        for (int i = 0; i < 12; ++i) buf[24 + i] = (unsigned char)tag12[i];
-
-        __try {
-            spoof_call(fn, (uint64_t)rcx,
-                       (uint64_t*)&opcode, (uint64_t*)&opcode,
-                       (void*)buf, (int)0x38,
-                       (char)attackerSide, (unsigned char)0);
-            ++sent;
-        } __except (EXCEPTION_EXECUTE_HANDLER) { ++threw; }
-    }
-    hook::g_allow_attack_send = false;
-
-    log::debugf("[AI] RosterSpoof_Target: target=%u attacker=%u buf[0]=%u a6=0x%02X sent=%d threw=%d tag=%s\r\n",
-                targetSide, attackerSide, targetSide, (unsigned)attackerSide, sent, threw, tag12);
-    return (threw == 0) ? sent : 0;
-}
-
-bool ai_control::SendDisableOppAi_ForceHome()
-{
-    // Target HOME (team 0). buf[0]=0, a6=1 (attacker pretends AWAY).
-    int n = RosterSpoof_Target(0x00, "ZH_HOM_BOT\0\0");
-    if (n == 11) { toast::Show(toast::Type::Success, "Target HOME (buf[0]=0, a6=1)"); return true; }
-    toast::Show(toast::Type::Error, "Target HOME failed");
-    return false;
-}
-
-bool ai_control::SendDisableOppAi_ForceAway()
-{
-    // Target AWAY (team 1). buf[0]=1, a6=0 (attacker pretends HOME).
-    int n = RosterSpoof_Target(0x01, "ZH_AWY_BOT\0\0");
-    if (n == 11) { toast::Show(toast::Type::Success, "Target AWAY (buf[0]=1, a6=0)"); return true; }
-    toast::Show(toast::Type::Error, "Target AWAY failed");
-    return false;
-}
-
-bool ai_control::SendRemoveSelf()
-{
-    // Experiment A — mirror SendDisableOpponentAi but target OUR own slot.
-    // Same 0xFAE6B64D opcode, same 0x38 payload shape, same dispatcher
-    // path. Only the target fields flip: mySide + g_ourPlayerId instead of
-    // oppSide + loop(0..10). Gamertag "ZH_GONE_" makes it identifiable in
-    // log diffs vs the BOT add fires.
-    if (!g_playerIdCaptured) {
-        toast::Show(toast::Type::Error, "RemoveSelf: ourPlayerId not captured");
-        return false;
-    }
-
-    uintptr_t rcx = 0;
-    rage::dispatch_fn_t fn = nullptr;
-    if (!rage::get_dispatch(rcx, fn)) {
-        log::debug("[AI] RemoveSelf: get_dispatch failed\r\n");
-        toast::Show(toast::Type::Error, "RemoveSelf: dispatcher unavailable");
-        return false;
-    }
-
-    uintptr_t ctx = GetMatchCtx();
-    if (!ctx) {
-        toast::Show(toast::Type::Error, "RemoveSelf: no match ctx");
-        return false;
-    }
-
-    uint32_t mySide = 0xFFFFFFFFu;
-    __try { mySide = *reinterpret_cast<uint32_t*>(ctx + 0x23D4); }
-    __except (EXCEPTION_EXECUTE_HANDLER) {}
-    if (mySide != 0 && mySide != 1) {
-        toast::Show(toast::Type::Error, "RemoveSelf: mySide invalid");
-        return false;
-    }
-
-    uint64_t opcode = 0xFAE6B64DULL;
-    uint8_t  buf[0x38];
-    __stosb(reinterpret_cast<unsigned char*>(buf), 0, 0x38);
-
-    buf[0] = static_cast<uint8_t>(mySide);
-    buf[1] = static_cast<uint8_t>(g_ourPlayerId);
-    buf[2] = 0xFF;
-    buf[3] = static_cast<uint8_t>(g_ourPlayerId);
-
-    // gamertag "ZH_GONE_" (8 bytes) at offset 24
-    static const unsigned char kGoneTag[] = { 'Z','H','_','G','O','N','E','_' };
-    for (int i = 0; i < 8; ++i) buf[24 + i] = kGoneTag[i];
-
-    bool ok = false;
-    hook::g_allow_attack_send = true;
-    __try {
-        spoof_call(fn, (uint64_t)rcx,
-                   (uint64_t*)&opcode, (uint64_t*)&opcode,
-                   (void*)buf, (int)0x38, (char)0xFF, (unsigned char)0);
-        ok = true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) { ok = false; }
-    hook::g_allow_attack_send = false;
-
-    char lb[192];
-    fmt::snprintf(lb, sizeof(lb),
-        "[AI] RemoveSelf: 0xFAE6B64D mySide=%u ourSlot=%u tag=ZH_GONE_ ok=%d\r\n",
-        mySide, static_cast<uint32_t>(g_ourPlayerId), ok ? 1 : 0);
-    log::debug(lb);
-
-    if (ok) toast::Show(toast::Type::Success, "RemoveSelf fired (1 pkt)");
-    else    toast::Show(toast::Type::Error, "RemoveSelf threw");
-    return ok;
+    const char* src = (opp_info::g_opponent.valid && opp_info::g_opponent.name[0])
+                          ? opp_info::g_opponent.name
+                          : fallback;
+    // buf[24..35] is already zeroed by the caller's __stosb — just copy
+    // until null or 12 bytes, whichever comes first.
+    for (int i = 0; i < 12 && src[i]; ++i)
+        buf[24 + i] = static_cast<unsigned char>(src[i]);
 }
 
 bool ai_control::FireAiHeartbeat()
