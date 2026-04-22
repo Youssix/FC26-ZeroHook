@@ -135,6 +135,7 @@
     <ClCompile Include="src\features\division.cpp" />
     <ClCompile Include="src\features\champions.cpp" />
     <ClCompile Include="src\features\opponent_info.cpp" />
+    <ClCompile Include="src\features\console_only.cpp" />
     <ClCompile Include="src\features\ai_difficulty.cpp" />
     <ClCompile Include="src\features\proclub.cpp" />
     <ClCompile Include="src\features\ai_control.cpp" />
@@ -151,6 +152,7 @@
     <ClInclude Include="src\features\rage.h" />
     <ClInclude Include="src\features\server.h" />
     <ClInclude Include="src\features\opponent_info.h" />
+    <ClInclude Include="src\features\console_only.h" />
     <ClInclude Include="src\features\ai_difficulty.h" />
     <ClInclude Include="src\features\proclub.h" />
     <ClInclude Include="src\features\ai_control.h" />
