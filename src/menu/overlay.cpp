@@ -13,6 +13,7 @@
 #include "../features/division.h"
 #include "../features/champions.h"
 #include "../features/opponent_info.h"
+#include "../features/console_only.h"
 #include "../features/ai_difficulty.h"
 #include "../features/proclub.h"
 #include "../features/ai_control.h"
@@ -201,6 +202,10 @@ void overlay::Init(D3D12Renderer* renderer)
             log::debug("[OVL-INIT] opp_info::Init...\r\n");
             __try { opp_info::Init(offsets::GameBase, offsets::GameSize); }
             __except (1) { log::debug("[OVL-INIT] EXCEPTION in opp_info::Init\r\n"); }
+
+            log::debug("[OVL-INIT] console_only::Init...\r\n");
+            __try { console_only::Init(offsets::GameBase, offsets::GameSize); }
+            __except (1) { log::debug("[OVL-INIT] EXCEPTION in console_only::Init\r\n"); }
 
             log::debug("[OVL-INIT] proclub::Init...\r\n");
             __try { proclub::Init(offsets::GameBase, offsets::GameSize); }
@@ -507,7 +512,42 @@ void overlay::Frame(float screenW, float screenH)
                 static bool matchTypeSpoof = false;
                 CustomMenu::g_menu.Toggle("WL -> Draft Matchmaking", &matchTypeSpoof);
 
-                CustomMenu::g_menu.Label("Requires hooks -- not yet active", CustomMenu::Colors::Warning);
+                CustomMenu::g_menu.Label("(above two require hooks -- not yet active)", CustomMenu::Colors::TextDisabled);
+
+                // ── Console-only MM (Phase-3 platform spoofer) ──
+                CustomMenu::g_menu.StatusIndicator("Console-only system", console_only::IsReady());
+                if (console_only::IsReady())
+                {
+                    if (!console_only::IsHooked())
+                    {
+                        if (CustomMenu::g_menu.ButtonColored("Install Hook##co", CustomMenu::Colors::Primary, -1, 28))
+                            console_only::InstallHook();
+                    }
+                    else
+                    {
+                        CustomMenu::g_menu.StatusIndicator("Hook Active", true);
+                        CustomMenu::g_menu.StatusIndicator("Getters Resolved", console_only::GettersResolved());
+
+                        CustomMenu::g_menu.Toggle("Console-only Matchmaking", &console_only::enabled,
+                            "Spoof bCrossplay/iPlatform so the server matches you against console only");
+
+                        static const char* s_platLabels[4] = { "PS5", "Xbox Series X|S", "PS4", "Xbox One" };
+                        static const uint32_t s_platValues[4] = {
+                            console_only::CP_PS5, console_only::CP_XBSX,
+                            console_only::CP_PS4, console_only::CP_XONE
+                        };
+                        static int s_platIdx = 0;
+                        if (CustomMenu::g_menu.Combo("Target Platform", &s_platIdx, s_platLabels, 4))
+                            console_only::targetPlatform = s_platValues[s_platIdx];
+                    }
+                }
+                else
+                {
+                    CustomMenu::g_menu.Label("Console-only not initialized", CustomMenu::Colors::Warning);
+                    if (CustomMenu::g_menu.Button("Retry Init##co", 120, 24))
+                        console_only::Init(offsets::GameBase, offsets::GameSize);
+                }
+
                 CustomMenu::g_menu.EndSection();
             }
         }
