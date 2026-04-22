@@ -67,6 +67,7 @@ namespace sliders
     // ── Functions ──
     bool InitOffsets(void* gameBase, unsigned long gameSize);
     void ApplySliders();
+    void ApplySlidersFut();     // POC: FUT-arm + slider-data 3-opcode recipe
     void SwapSettings();
     void RefreshPlayerNames();
     void SelectAll(int team, bool selected);

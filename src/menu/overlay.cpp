@@ -604,6 +604,9 @@ void overlay::Frame(float screenW, float screenH)
                     sliders::RefreshPlayerNames();
                 }
                 CustomMenu::g_menu.NextColumn();
+                if (CustomMenu::g_menu.ButtonColored("Apply Sliders FUT (POC)", CustomMenu::Colors::Warning, 200, 28)) {
+                    sliders::ApplySlidersFut();
+                }
                 CustomMenu::g_menu.EndRow();
 
                 CustomMenu::g_menu.EndSection();

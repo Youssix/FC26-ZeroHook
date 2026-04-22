@@ -152,24 +152,18 @@ void sliders::RefreshPlayerNames()
     namesValid = (playerCount[0] > 0 || playerCount[1] > 0);
 }
 
-// ── ApplySliders ─────────────────────────────────────────────────────
-
-void sliders::ApplySliders()
+// ── BuildSliderBuffer (private helper) ───────────────────────────────
+// Populates the 1924-byte slider buffer with current user-selected values.
+// Shared by ApplySliders() and ApplySlidersFut().
+static void BuildSliderBuffer(unsigned char* buffer)
 {
-    uintptr_t rcx = 0;
-    rage::dispatch_fn_t fn = nullptr;
-    if (!rage::get_dispatch(rcx, fn)) {
-        log::debug("[SLIDERS] ApplySliders: dispatch not ready\r\n");
-        return;
-    }
-
-    alignas(16) unsigned char buffer[1924];
-    __stosb(buffer, 0, sizeof(buffer));
+    using namespace sliders;
+    __stosb(buffer, 0, 1924);
 
     if (slider_buffer_fnc) {
         typedef void(__fastcall* slider_buf_fn_t)(__int64);
-        auto fn = reinterpret_cast<slider_buf_fn_t>(slider_buffer_fnc);
-        spoof_call(fn, (__int64)buffer);
+        auto buf_fn = reinterpret_cast<slider_buf_fn_t>(slider_buffer_fnc);
+        spoof_call(buf_fn, (__int64)buffer);
     }
 
     int local_start = (playerside == 0) ? 0 : 25;
@@ -269,6 +263,21 @@ void sliders::ApplySliders()
         b[7 * idx + 0x748] = clamp_byte(opp_tackle_aggression);
         b[0x738 + 2 * idx] = 0x32;
     }
+}
+
+// ── ApplySliders (single 0x5EE6BB89 send — works in Pro Club) ────────
+
+void sliders::ApplySliders()
+{
+    uintptr_t rcx = 0;
+    rage::dispatch_fn_t fn = nullptr;
+    if (!rage::get_dispatch(rcx, fn)) {
+        log::debug("[SLIDERS] ApplySliders: dispatch not ready\r\n");
+        return;
+    }
+
+    alignas(16) unsigned char buffer[1924];
+    BuildSliderBuffer(buffer);
 
     uint64_t opcode = 0x5EE6BB89;
 
@@ -279,6 +288,53 @@ void sliders::ApplySliders()
 
     toast::Show(toast::Type::Success, "Sliders applied");
     log::debug("[SLIDERS] ApplySliders sent\r\n");
+}
+
+// ── ApplySlidersFut (POC: 3-opcode recipe mirroring sub_1489D3300) ───
+// Native sub_1489D3300 sends {0xF6A35F24 sz=4 payload=0x1F} → {0x5EE6BB89 sz=1924}.
+// In FUT, the slider subscriber at vtable 0x14B577788 is gated behind a client-side
+// byte (DatabaseContainer +0xF3E3). Hypothesis: 0xF6A35F24 is the "arm" that primes
+// the receiver so the 1924-byte payload is accepted.
+// Also uses TWO separate opcode locals (native shape) instead of &opcode,&opcode
+// shared-pointer — in case the dispatcher writes back to one slot.
+
+void sliders::ApplySlidersFut()
+{
+    uintptr_t rcx = 0;
+    rage::dispatch_fn_t fn = nullptr;
+    if (!rage::get_dispatch(rcx, fn)) {
+        log::debug("[SLIDERS] ApplySlidersFut: dispatch not ready\r\n");
+        return;
+    }
+
+    alignas(16) unsigned char buffer[1924];
+    BuildSliderBuffer(buffer);
+
+    hook::g_allow_attack_send = true;
+
+    // Step 1 — arm signal: opcode 0xF6A35F24 sz=4 with payload 0x1F
+    {
+        uint64_t arm_op_a = 0xF6A35F24;
+        uint64_t arm_op_b = 0xF6A35F24;
+        uint32_t arm_payload = 0x1F;
+        spoof_call(fn, (uint64_t)rcx,
+            (uint64_t*)&arm_op_a, (uint64_t*)&arm_op_b,
+            (void*)&arm_payload, (int)4, (char)0xFFFFFFFF, (unsigned char)0);
+    }
+
+    // Step 2 — sliders: opcode 0x5EE6BB89 sz=1924, separate locals per native shape
+    {
+        uint64_t op_a = 0x5EE6BB89;
+        uint64_t op_b = 0x5EE6BB89;
+        spoof_call(fn, (uint64_t)rcx,
+            (uint64_t*)&op_a, (uint64_t*)&op_b,
+            (void*)buffer, (int)1924, (char)0xFFFFFFFF, (unsigned char)0);
+    }
+
+    hook::g_allow_attack_send = false;
+
+    toast::Show(toast::Type::Success, "FUT sliders applied (arm+data)");
+    log::debug("[SLIDERS] ApplySlidersFut: arm 0xF6A35F24 + data 0x5EE6BB89 sent\r\n");
 }
 
 // ── SwapSettings ─────────────────────────────────────────────────────
