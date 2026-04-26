@@ -520,7 +520,7 @@ void hook::set_block_input(bool block) { g_blockInput = block; }
 extern "C" unsigned long long HookedPresentPassThrough(void*, void*,
     unsigned int, unsigned int)
 {
-    return 0;
+    return 1;
 }
 
 extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
