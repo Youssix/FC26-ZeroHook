@@ -854,8 +854,27 @@ extern "C" unsigned long long HookedResizeBuffers(void* ctx, void* pSwapChain,
     return 0;  // run original ResizeBuffers
 }
 
-// ===== Install all DXGI hooks =====
+// ===== Install DXGI hooks =====
 
+void hook::install_present_hook_only()
+{
+    // All offsets already resolved by offsets::Init()
+    if (!offsets::SwapChain)
+    {
+        log::debug("[ZeroHook] ERROR: SwapChain not resolved by offsets::Init()\r\n");
+        return;
+    }
+
+    void** vtable = *(void***)offsets::SwapChain;
+
+    log::debug("[ZeroHook] Installing Present hook only\r\n");
+    install_ept_hook(
+        (unsigned char*)vtable[VTABLE_PRESENT],
+        (void*)&HookedPresent,
+        "Present");
+}
+
+// ===== Install all DXGI hooks =====
 void hook::install_dxgi_hooks()
 {
     // All offsets already resolved by offsets::Init()
@@ -867,10 +886,7 @@ void hook::install_dxgi_hooks()
 
     void** vtable = *(void***)offsets::SwapChain;
 
-    install_ept_hook(
-        (unsigned char*)vtable[VTABLE_PRESENT],
-        (void*)&HookedPresent,
-        "Present");
+    install_present_hook_only();
 
     // ResizeBuffers hook — lightweight (just TeardownD3D12, no GPU sync).
     // Previous BSOD was from WaitForSingleObject(INFINITE) in the hook body.
