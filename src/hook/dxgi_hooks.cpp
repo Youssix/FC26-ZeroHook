@@ -83,9 +83,17 @@ namespace
             log::debug(buf);
         }
 
-        // Follow JMP chain to resolve through inline hooks
+        // Follow JMP chain to resolve through inline hooks.
+        // FC26 can point the vtable at a hot-patch thunk starting with
+        // lea rsp,[rsp] (48 8D 24 24). Hooking there can corrupt adjacent
+        // dense thunks on the shadow page, so skip it before resolving jumps.
         for (int chain = 0; chain < 8; chain++)
         {
+            if (target[0] == 0x48 && target[1] == 0x8D && target[2] == 0x24 && target[3] == 0x24)
+            {
+                target += 4;
+                continue;
+            }
             if (target[0] == 0xE9)
             {
                 int32_t rel = *(int32_t*)(target + 1);
@@ -137,6 +145,15 @@ namespace
         g_hookParams.relocated_size = reloc_result.size;
         g_hookParams.fixup_count = reloc_result.fixup_count;
 
+        if (g_debugLog) {
+            fmt::snprintf(buf, sizeof(buf),
+                "[ZeroHook] %s reloc: target=%p detour=%p displaced=%u relocated=%u fixups=%u stub=%u\r\n",
+                name, target, detour,
+                reloc_result.displaced_count, reloc_result.size,
+                reloc_result.fixup_count, STUB_SIZE);
+            log::debug(buf);
+        }
+
         for (unsigned int i = 0; i < reloc_result.size; i++)
             g_hookParams.relocated_bytes[i] = reloc_result.bytes[i];
 
@@ -176,6 +193,11 @@ namespace
 
         for (int chain = 0; chain < 8; chain++)
         {
+            if (target[0] == 0x48 && target[1] == 0x8D && target[2] == 0x24 && target[3] == 0x24)
+            {
+                target += 4;
+                continue;
+            }
             if (target[0] == 0xE9)
             {
                 int32_t rel = *(int32_t*)(target + 1);
@@ -226,6 +248,15 @@ namespace
         g_hookParams.displaced_count = reloc_result.displaced_count;
         g_hookParams.relocated_size = reloc_result.size;
         g_hookParams.fixup_count = reloc_result.fixup_count;
+
+        if (g_debugLog) {
+            fmt::snprintf(buf, sizeof(buf),
+                "[ZeroHook] %s reloc: target=%p detour=%p displaced=%u relocated=%u fixups=%u stub=%u\r\n",
+                name, target, detour,
+                reloc_result.displaced_count, reloc_result.size,
+                reloc_result.fixup_count, STUB_SIZE);
+            log::debug(buf);
+        }
 
         for (unsigned int i = 0; i < reloc_result.size; i++)
             g_hookParams.relocated_bytes[i] = reloc_result.bytes[i];
