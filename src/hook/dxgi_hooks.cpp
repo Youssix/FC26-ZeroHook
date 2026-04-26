@@ -486,6 +486,12 @@ void hook::set_block_input(bool block) { g_blockInput = block; }
 
 // ===== Present detour =====
 
+extern "C" unsigned long long HookedPresentPassThrough(void*, void*,
+    unsigned int, unsigned int)
+{
+    return 0;
+}
+
 extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
     unsigned int syncInterval, unsigned int flags)
 {
@@ -870,8 +876,8 @@ void hook::install_present_hook_only()
     log::debug("[ZeroHook] Installing Present hook only\r\n");
     install_ept_hook(
         (unsigned char*)vtable[VTABLE_PRESENT],
-        (void*)&HookedPresent,
-        "Present");
+        (void*)&HookedPresentPassThrough,
+        "PresentPassThrough");
 }
 
 // ===== Install all DXGI hooks =====
@@ -886,7 +892,10 @@ void hook::install_dxgi_hooks()
 
     void** vtable = *(void***)offsets::SwapChain;
 
-    install_present_hook_only();
+    install_ept_hook(
+        (unsigned char*)vtable[VTABLE_PRESENT],
+        (void*)&HookedPresent,
+        "Present");
 
     // ResizeBuffers hook — lightweight (just TeardownD3D12, no GPU sync).
     // Previous BSOD was from WaitForSingleObject(INFINITE) in the hook body.
