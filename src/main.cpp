@@ -10,7 +10,7 @@
 #pragma comment(lib, "kernel32.lib")
 
 #ifndef ZH_AMD_WIN11_TEST_PHASE
-#define ZH_AMD_WIN11_TEST_PHASE 1
+#define ZH_AMD_WIN11_TEST_PHASE 2
 #endif
 
 #if ZH_AMD_WIN11_TEST_PHASE < 1 || ZH_AMD_WIN11_TEST_PHASE > 5
