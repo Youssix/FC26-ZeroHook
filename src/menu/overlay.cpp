@@ -257,7 +257,7 @@ bool overlay::IsInitialized()
     return g_initialized;
 }
 
-void overlay::Frame(float screenW, float screenH)
+bool overlay::Frame(float screenW, float screenH)
 {
     static bool s_first = true;
 
@@ -284,6 +284,30 @@ void overlay::Frame(float screenW, float screenH)
             CustomMenu::g_menu.Toggle();
         prevInsert = curInsert;
         prevF5     = curF5;
+    }
+
+    const bool menuVisible = CustomMenu::g_menu.IsOpen();
+    const bool opponentWindowVisible = !g_menuOnly && opp_info::IsHooked() && opp_info::g_showWindow;
+    const bool toastVisible = toast::HasActive();
+
+    // R6-style fast path: if nothing is visible, do not build menu widgets and
+    // let Present skip command-list reset/barriers/Execute/Signal entirely.
+    if (!menuVisible && !opponentWindowVisible)
+    {
+        if (toastVisible && g_rendererPtr)
+        {
+            LARGE_INTEGER now;
+            QueryPerformanceCounter(&now);
+            float dt = (float)(now.QuadPart - g_lastTime.QuadPart) / (float)g_freq.QuadPart;
+            g_lastTime = now;
+            if (dt > 0.1f) dt = 0.1f;
+            toast::Render(*g_rendererPtr, screenW, screenH, dt);
+            if (s_first) { log::debug("[OVL] Done\r\n"); s_first = false; }
+            return true;
+        }
+
+        if (s_first) { log::debug("[OVL] Done\r\n"); s_first = false; }
+        return false;
     }
 
     if (s_first) log::debug("[OVL] GetMouse\r\n");
@@ -1184,6 +1208,22 @@ void overlay::Frame(float screenW, float screenH)
 
             if (CustomMenu::g_menu.BeginSection("Network Test"))
             {
+                CustomMenu::g_menu.StatusIndicator("Network NPT Hook Installed",
+                    hook::g_network_hook_installed);
+
+                if (!hook::g_network_hook_installed)
+                {
+                    if (CustomMenu::g_menu.ButtonColored("Install Network NPT Hook",
+                        CustomMenu::Colors::Primary, -1, 28))
+                        hook::install_network_hooks();
+                }
+                else
+                {
+                    if (CustomMenu::g_menu.ButtonColored("Remove Network NPT Hook",
+                        CustomMenu::Colors::Secondary, -1, 28))
+                        hook::remove_network_hooks();
+                }
+
                 CustomMenu::g_menu.Toggle("Fast Pass RouteGameMessage",
                     (bool*)&hook::g_network_fast_passthrough,
                     "ON: network hook stays installed but immediately passes through. If FPS improves, detour logic is the problem. If not, NPT hook frequency is the problem.");
@@ -1296,7 +1336,7 @@ void overlay::Frame(float screenW, float screenH)
 
     if (g_menuOnly) {
         if (s_first) { log::debug("[OVL] Done\r\n"); s_first = false; }
-        return;
+        return true;
     }
 
     // ── Per-frame features (run even when menu is closed) ──
@@ -1372,4 +1412,5 @@ void overlay::Frame(float screenW, float screenH)
     }
 
     if (s_first) { log::debug("[OVL] Done\r\n"); s_first = false; }
+    return true;
 }

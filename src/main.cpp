@@ -52,7 +52,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
         hook::install_present_render_hook_only();
 #elif ZH_AMD_WIN11_TEST_PHASE >= 5
         hook::install_present_render_hook_only();
-        hook::install_network_hooks();
+        log::debug("[ZeroHook] Network hook available from Settings tab (not auto-installed)\r\n");
 #endif
     }
 

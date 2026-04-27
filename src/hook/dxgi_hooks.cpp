@@ -809,7 +809,20 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
         return 0;
     }
 
-    // Reset THIS frame's allocator + the shared command list
+    bool drawOverlay = false;
+    if (g_cachedWidth != 0 && g_cachedHeight != 0) {
+        const float screenW = (float)g_cachedWidth;
+        const float screenH = (float)g_cachedHeight;
+
+        g_renderer.BeginFrame(screenW, screenH);
+        drawOverlay = overlay::Frame(screenW, screenH);
+    }
+
+    if (!drawOverlay)
+        return 0;
+
+    // Reset THIS frame's allocator + the shared command list only when we
+    // actually have overlay work to submit. This is the hot-path FPS fix.
     HRESULT hr1 = SpoofVCall<HRESULT>(fc.cmdAllocator, d3d12_vtable::CmdAlloc::Reset);
     HRESULT hr2 = SpoofVCall<HRESULT>(g_cmdList, d3d12_vtable::CmdList::Reset,
         (ID3D12CommandAllocator*)fc.cmdAllocator, (ID3D12PipelineState*)nullptr);
@@ -848,15 +861,7 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
         (UINT)1, (const D3D12_CPU_DESCRIPTOR_HANDLE*)&fc.rtvDescriptor,
         (BOOL)FALSE, (const D3D12_CPU_DESCRIPTOR_HANDLE*)nullptr);
 
-    // Reuse cached dimensions — already seeded by the resize-poll block above.
-    if (g_cachedWidth != 0 && g_cachedHeight != 0) {
-        const float screenW = (float)g_cachedWidth;
-        const float screenH = (float)g_cachedHeight;
-
-        g_renderer.BeginFrame(screenW, screenH);
-        overlay::Frame(screenW, screenH);
-        g_renderer.Render(g_cmdList);
-    }
+    g_renderer.Render(g_cmdList);
 
     // Barrier: RENDER_TARGET → PRESENT
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;

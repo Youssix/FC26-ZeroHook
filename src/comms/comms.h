@@ -8,6 +8,7 @@ constexpr unsigned int CMD_PING             = 0x01;
 constexpr unsigned int CMD_WRITE_MEMORY     = 0x03;
 constexpr unsigned int CMD_INSTALL_EPT_HOOK = 0x10;
 constexpr unsigned int CMD_EPT_PATCH_BYTES  = 0x12;
+constexpr unsigned int CMD_REMOVE_EPT_HOOK  = 0x13;
 
 struct ept_patch_bytes_params_t {
     unsigned int patch_offset;     // offset within the 4KB page

@@ -14,6 +14,7 @@
 // Bypass flag — true only while WE are sending an attack opcode
 volatile bool hook::g_allow_attack_send = false;
 volatile bool hook::g_network_fast_passthrough = false;
+volatile bool hook::g_network_hook_installed = false;
 volatile bool hook::g_bypass_alt_tab = false;
 
 namespace
@@ -21,6 +22,7 @@ namespace
     __declspec(align(4096)) ept::ept_hook_install_params_t g_netHookParams = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_altTabHookParams = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_matchTimerHookParams = {};
+    unsigned char* g_routeGameMessageHookTarget = nullptr;
 
     // MatchTimer state — tracks previous frame's match clock to detect kickoff transition
     volatile float g_matchPrevTime = 0.0f;
@@ -287,17 +289,58 @@ namespace
 
 void hook::install_network_hooks()
 {
+    if (hook::g_network_hook_installed)
+    {
+        log::debug("[ZeroHook] RouteGameMessage hook already installed\r\n");
+        return;
+    }
+
     if (offsets::FnRouteGameMessage)
     {
-        ept::install_hook(g_netHookParams,
+        unsigned char* resolved_target = nullptr;
+        bool ok = ept::install_hook(g_netHookParams,
             (unsigned char*)offsets::FnRouteGameMessage,
-            (void*)&HookedRouteGameMessage, "RouteGameMessage");
-        log::debug("[ZeroHook] RouteGameMessage hooked (crash/freeze protection)\r\n");
+            (void*)&HookedRouteGameMessage, "RouteGameMessage", &resolved_target);
+
+        if (ok)
+        {
+            g_routeGameMessageHookTarget = resolved_target;
+            hook::g_network_hook_installed = true;
+            log::debug("[ZeroHook] RouteGameMessage hooked (crash/freeze protection)\r\n");
+        }
+        else
+        {
+            log::debug("[ZeroHook] WARNING: RouteGameMessage hook install failed\r\n");
+        }
     }
     else
     {
         log::debug("[ZeroHook] WARNING: RouteGameMessage not found, protection disabled\r\n");
     }
+}
+
+bool hook::remove_network_hooks()
+{
+    if (!hook::g_network_hook_installed || !g_routeGameMessageHookTarget)
+    {
+        log::debug("[ZeroHook] RouteGameMessage hook is not installed\r\n");
+        return false;
+    }
+
+    bool ok = ept::remove_hook(g_routeGameMessageHookTarget, "RouteGameMessage");
+    if (ok)
+    {
+        g_routeGameMessageHookTarget = nullptr;
+        hook::g_network_hook_installed = false;
+        hook::g_network_fast_passthrough = false;
+        log::debug("[ZeroHook] RouteGameMessage hook removed\r\n");
+    }
+    else
+    {
+        log::debug("[ZeroHook] WARNING: RouteGameMessage hook remove failed\r\n");
+    }
+
+    return ok;
 }
 
 void hook::install_alttab_hook()
