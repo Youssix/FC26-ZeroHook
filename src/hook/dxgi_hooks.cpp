@@ -56,6 +56,9 @@ namespace
 
     constexpr int VTABLE_PRESENT        = 8;
     constexpr int VTABLE_RESIZE_BUFFERS = 13;
+    constexpr UINT DEVICE_HEALTH_CHECK_INTERVAL = 128;
+    constexpr UINT RESIZE_POLL_INTERVAL = 256;
+    constexpr DWORD RESIZE_DRAIN_TIMEOUT_MS = 250;
 
     void patch_stub(unsigned char* stub, unsigned int size, unsigned long long detour_va)
     {
@@ -308,20 +311,24 @@ namespace
     static UINT g_cachedHeight = 0;
     static HANDLE g_fenceEvent = nullptr;
 
-    // Drain all GPU work queued on g_cmdQueue by signalling the fence and
-    // waiting until it completes. Safe to call only when g_fence / g_cmdQueue
-    // / g_fenceEvent are all valid. Returns true on successful drain.
+    // Drain all GPU work queued before this point. ResizeBuffers is rare, so a
+    // bounded wait here is acceptable; Present itself must never block.
     static bool DrainGpuWork()
     {
         if (!g_fence || !g_cmdQueue || !g_fenceEvent) return false;
+
         UINT64 waitVal = g_fenceValue;
         if (SpoofVCall<HRESULT>(g_cmdQueue, d3d12_vtable::CmdQueue::Signal,
                 (ID3D12Fence*)g_fence, (UINT64)waitVal) != S_OK) return false;
         g_fenceValue++;
+
         if (SpoofVCall<UINT64>(g_fence, d3d12_vtable::Fence::GetCompletedValue) < waitVal) {
             if (SpoofVCall<HRESULT>(g_fence, d3d12_vtable::Fence::SetEventOnCompletion,
                     (UINT64)waitVal, (HANDLE)g_fenceEvent) != S_OK) return false;
-            spoof_call(WaitForSingleObject, (HANDLE)g_fenceEvent, (DWORD)1000);
+            if (spoof_call(WaitForSingleObject,
+                    (HANDLE)g_fenceEvent, (DWORD)RESIZE_DRAIN_TIMEOUT_MS) != WAIT_OBJECT_0) {
+                return false;
+            }
         }
         return true;
     }
@@ -526,13 +533,20 @@ extern "C" unsigned long long HookedPresentPassThrough(void*, void*,
 extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
     unsigned int syncInterval, unsigned int flags)
 {
-    static LONG s_frameNum = 0;
-    LONG frameNum = InterlockedIncrement(&s_frameNum);
+    static UINT s_deviceHealthCountdown = DEVICE_HEALTH_CHECK_INTERVAL;
+    static UINT s_resizePollCountdown = RESIZE_POLL_INTERVAL;
 
-    // ── Device health check — FIRST, unconditionally (FC26 pattern) ──
-    if (!CheckDeviceAlive((IDXGISwapChain*)pSwapChain)) {
-        TeardownD3D12();
-        return 0;  // EPT stub runs original Present
+    // Once initialized, throttle device health checks. The hot path should not
+    // do a device vcall every Present; reset/execute failures still handle
+    // immediate device-loss cases below.
+    if (g_rendererInitialized) {
+        if (--s_deviceHealthCountdown == 0) {
+            s_deviceHealthCountdown = DEVICE_HEALTH_CHECK_INTERVAL;
+            if (!CheckDeviceAlive((IDXGISwapChain*)pSwapChain)) {
+                TeardownD3D12();
+                return 0;  // EPT stub runs original Present
+            }
+        }
     }
 
     // ── Resolve command queue BEFORE init (FC26 pattern) ──
@@ -730,12 +744,18 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
         g_renderer.RemapVertexBuffer();
     }
 
-    // ── Lazy resize: when cache is invalidated (ResizeBuffers hook zeros it,
-    // or on first frame), one GetDesc seeds it. As a safety net for resizes
-    // that bypass our hook, we re-poll every RESIZE_POLL_INTERVAL frames.
-    // This keeps the common path free of per-frame GetDesc.
-    constexpr LONG RESIZE_POLL_INTERVAL = 30;
-    if (g_cachedWidth == 0 || (frameNum % RESIZE_POLL_INTERVAL) == 0) {
+    // ── Lazy resize: ResizeBuffers hook invalidates the cache. Keep a low-rate
+    // safety poll for swapchain changes that bypass the hook.
+    bool pollResize = false;
+    if (g_cachedWidth == 0) {
+        pollResize = true;
+        s_resizePollCountdown = RESIZE_POLL_INTERVAL;
+    } else if (--s_resizePollCountdown == 0) {
+        pollResize = true;
+        s_resizePollCountdown = RESIZE_POLL_INTERVAL;
+    }
+
+    if (pollResize) {
         DXGI_SWAP_CHAIN_DESC scd = {};
         SpoofVCall<HRESULT>((IDXGISwapChain*)pSwapChain, dxgi_vtable::SwapChain::GetDesc, &scd);
         UINT w = scd.BufferDesc.Width, h = scd.BufferDesc.Height;
@@ -759,8 +779,8 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
     if (bbIdx >= g_bufferCount) {
         if (g_debugLog) {
             char fb[128];
-            fmt::snprintf(fb, sizeof(fb), "[Present] BAIL frame=%d bbIdx=%u >= bufCount=%u\r\n",
-                (int)frameNum, (unsigned)bbIdx, (unsigned)g_bufferCount);
+            fmt::snprintf(fb, sizeof(fb), "[Present] BAIL bbIdx=%u >= bufCount=%u\r\n",
+                (unsigned)bbIdx, (unsigned)g_bufferCount);
             log::debug(fb);
         }
         return 0;
@@ -769,21 +789,12 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
     FrameContext& fc = g_frameCtx[bbIdx];
     if (!fc.backBuffer) return 0;
 
-    // Wait for THIS frame context's previous GPU work to finish — reuse the
-    // persistent fence event (auto-reset) instead of creating/closing per frame.
+    // Do not block Present. If this backbuffer's previous overlay work is still
+    // in flight, skip overlay for this frame and let the original Present run.
+    // Blocking here is the classic 1 FPS failure mode when the fence stalls.
     if (g_fence && g_fenceEvent && fc.fenceValue != 0 &&
         SpoofVCall<UINT64>(g_fence, d3d12_vtable::Fence::GetCompletedValue) < fc.fenceValue) {
-        SpoofVCall<HRESULT>(g_fence, d3d12_vtable::Fence::SetEventOnCompletion,
-            (UINT64)fc.fenceValue, (HANDLE)g_fenceEvent);
-        if (spoof_call(WaitForSingleObject, (HANDLE)g_fenceEvent, (DWORD)1000) == WAIT_TIMEOUT) {
-            if (g_debugLog) {
-                char fb[128];
-                fmt::snprintf(fb, sizeof(fb), "[Present] TIMEOUT frame=%d bbIdx=%u fenceVal=%llu\r\n",
-                    (int)frameNum, (unsigned)bbIdx, (unsigned long long)fc.fenceValue);
-                log::debug(fb);
-            }
-            return 0;
-        }
+        return 0;
     }
 
     // Reset THIS frame's allocator + the shared command list
@@ -793,8 +804,8 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
     if (hr1 != 0 || hr2 != 0) {
         if (g_debugLog) {
             char fb[128];
-            fmt::snprintf(fb, sizeof(fb), "[Present] RESET FAIL frame=%d alloc=0x%08X list=0x%08X\r\n",
-                (int)frameNum, (unsigned)hr1, (unsigned)hr2);
+            fmt::snprintf(fb, sizeof(fb), "[Present] RESET FAIL alloc=0x%08X list=0x%08X\r\n",
+                (unsigned)hr1, (unsigned)hr2);
             log::debug(fb);
         }
         HRESULT rr = SpoofVCall<HRESULT>(g_d3dDevice, d3d12_vtable::Device::GetDeviceRemovedReason);
@@ -826,15 +837,13 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
         (BOOL)FALSE, (const D3D12_CPU_DESCRIPTOR_HANDLE*)nullptr);
 
     // Reuse cached dimensions — already seeded by the resize-poll block above.
-    if (g_renderer.IsInitialized()) {
-        float screenW = (float)g_cachedWidth;
-        float screenH = (float)g_cachedHeight;
+    if (g_cachedWidth != 0 && g_cachedHeight != 0) {
+        const float screenW = (float)g_cachedWidth;
+        const float screenH = (float)g_cachedHeight;
 
-        if (screenW > 0 && screenH > 0) {
-            g_renderer.BeginFrame(screenW, screenH);
-            overlay::Frame(screenW, screenH);
-            g_renderer.Render(g_cmdList);
-        }
+        g_renderer.BeginFrame(screenW, screenH);
+        overlay::Frame(screenW, screenH);
+        g_renderer.Render(g_cmdList);
     }
 
     // Barrier: RENDER_TARGET → PRESENT
@@ -848,8 +857,8 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
     if (hrClose != 0) {
         if (g_debugLog) {
             char fb[128];
-            fmt::snprintf(fb, sizeof(fb), "[Present] CLOSE FAIL frame=%d hr=0x%08X\r\n",
-                (int)frameNum, (unsigned)hrClose);
+            fmt::snprintf(fb, sizeof(fb), "[Present] CLOSE FAIL hr=0x%08X\r\n",
+                (unsigned)hrClose);
             log::debug(fb);
         }
         return 0;
@@ -879,9 +888,13 @@ extern "C" unsigned long long HookedResizeBuffers(void* ctx, void* pSwapChain,
 {
     if (g_rendererInitialized && g_d3dDevice) {
         log::debug("[ResizeBuffers] Draining GPU + releasing back buffers\r\n");
-        DrainGpuWork();
-        ReleaseBackBuffersOnly();
-        g_needsBackBufferReinit = true;
+        if (DrainGpuWork()) {
+            ReleaseBackBuffersOnly();
+            g_needsBackBufferReinit = true;
+        } else {
+            log::debug("[ResizeBuffers] Drain timeout, full teardown\r\n");
+            TeardownD3D12();
+        }
     } else {
         log::debug("[ResizeBuffers] Full teardown\r\n");
         TeardownD3D12();
@@ -922,11 +935,16 @@ void hook::install_present_render_hook_only()
 
     void** vtable = *(void***)offsets::SwapChain;
 
-    log::debug("[ZeroHook] Installing Present render hook only\r\n");
+    log::debug("[ZeroHook] Installing Present + ResizeBuffers render hooks only\r\n");
     install_ept_hook(
         (unsigned char*)vtable[VTABLE_PRESENT],
         (void*)&HookedPresent,
         "PresentRenderOnly");
+
+    install_ept_hook(
+        (unsigned char*)vtable[VTABLE_RESIZE_BUFFERS],
+        (void*)&HookedResizeBuffers,
+        "ResizeBuffersRenderOnly");
 }
 
 // ===== Install all DXGI hooks =====
