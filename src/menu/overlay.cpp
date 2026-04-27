@@ -27,6 +27,8 @@ namespace
 {
     bool           g_initialized = false;
     bool           g_rageReady   = false;
+    bool           g_menuOnly    = false;
+    bool           g_gameInitDone = false;
     D3D12Renderer* g_rendererPtr = nullptr;
     LARGE_INTEGER  g_lastTime    = {};
 
@@ -150,6 +152,15 @@ namespace
     bool g_noBooking     = false;
 }
 
+void overlay::SetMenuOnly(bool menuOnly)
+{
+    if (g_menuOnly && !menuOnly) {
+        g_gameInitDone = false;
+        g_rageReady = false;
+    }
+    g_menuOnly = menuOnly;
+}
+
 void overlay::Init(D3D12Renderer* renderer)
 {
     log::debug("[OVL-INIT] overlay::Init entered\r\n");
@@ -166,15 +177,15 @@ void overlay::Init(D3D12Renderer* renderer)
     CustomMenu::g_menu.SetOpen(true);
 
     // Only do one-time game init on first call — resizes only need renderer re-init
-    static bool s_gameInitDone = false;
-    if (!s_gameInitDone)
+    if (!g_gameInitDone)
     {
         log::debug("[OVL-INIT] FrostbiteInput::Init...\r\n");
         __try { FrostbiteInput::Init(); }
         __except (1) { log::debug("[OVL-INIT] EXCEPTION in FrostbiteInput::Init\r\n"); }
 
-        // Scan rage + slider offsets (pattern scan needs game module)
-        if (offsets::GameBase && offsets::GameSize)
+        // Scan feature offsets only in full mode. Phase 45 is menu/render only
+        // and must not spend CPU on unrelated feature initialization.
+        if (!g_menuOnly && offsets::GameBase && offsets::GameSize)
         {
             log::debug("[OVL-INIT] rage::InitOffsets...\r\n");
             __try { g_rageReady = rage::InitOffsets(offsets::GameBase, offsets::GameSize); }
@@ -211,25 +222,29 @@ void overlay::Init(D3D12Renderer* renderer)
             __try { proclub::Init(offsets::GameBase, offsets::GameSize); }
             __except (1) { log::debug("[OVL-INIT] EXCEPTION in proclub::Init\r\n"); }
         } else {
-            log::debug("[OVL-INIT] SKIP feature inits — GameBase/GameSize are NULL\r\n");
+            log::debug(g_menuOnly
+                ? "[OVL-INIT] SKIP feature inits — menu-only mode\r\n"
+                : "[OVL-INIT] SKIP feature inits — GameBase/GameSize are NULL\r\n");
         }
 
         QueryPerformanceFrequency(&g_freq);
         QueryPerformanceCounter(&g_lastTime);
 
 #ifndef STANDARD_BUILD
-        log::debug("[OVL-INIT] RegisterSliderHotkeys...\r\n");
-        __try { RegisterSliderHotkeys(); }
-        __except (1) { log::debug("[OVL-INIT] EXCEPTION in RegisterSliderHotkeys\r\n"); }
+        if (!g_menuOnly) {
+            log::debug("[OVL-INIT] RegisterSliderHotkeys...\r\n");
+            __try { RegisterSliderHotkeys(); }
+            __except (1) { log::debug("[OVL-INIT] EXCEPTION in RegisterSliderHotkeys\r\n"); }
 
-        if (g_rageReady) {
-            log::debug("[OVL-INIT] RegisterRageHotkeys...\r\n");
-            __try { RegisterRageHotkeys(); }
-            __except (1) { log::debug("[OVL-INIT] EXCEPTION in RegisterRageHotkeys\r\n"); }
+            if (g_rageReady) {
+                log::debug("[OVL-INIT] RegisterRageHotkeys...\r\n");
+                __try { RegisterRageHotkeys(); }
+                __except (1) { log::debug("[OVL-INIT] EXCEPTION in RegisterRageHotkeys\r\n"); }
+            }
         }
 #endif
 
-        s_gameInitDone = true;
+        g_gameInitDone = true;
         log::debug("[OVL-INIT] === game init complete ===\r\n");
     }
 
@@ -249,12 +264,16 @@ void overlay::Frame(float screenW, float screenH)
     if (s_first) log::debug("[OVL] BlockInput(false)\r\n");
     FrostbiteInput::BlockGameInput(false);
 
-    if (s_first) log::debug("[OVL] CheckHotkeys\r\n");
-    menu::CheckHotkeys();
+    if (!g_menuOnly) {
+        if (s_first) log::debug("[OVL] CheckHotkeys\r\n");
+        menu::CheckHotkeys();
+    }
 
     // Per-frame: apply Pro Club Search Alone EPT patch on toggle change
-    __try { proclub::Update(); }
-    __except (1) { if (s_first) log::debug("[OVL] EXCEPTION in proclub::Update\r\n"); }
+    if (!g_menuOnly) {
+        __try { proclub::Update(); }
+        __except (1) { if (s_first) log::debug("[OVL] EXCEPTION in proclub::Update\r\n"); }
+    }
 
     // Menu toggle — manual edge detect (FC26 pattern)
     {
@@ -1264,6 +1283,11 @@ void overlay::Frame(float screenW, float screenH)
     }
 
     CustomMenu::g_menu.EndFrame();
+
+    if (g_menuOnly) {
+        if (s_first) { log::debug("[OVL] Done\r\n"); s_first = false; }
+        return;
+    }
 
     // ── Per-frame features (run even when menu is closed) ──
     if (g_rageReady && rage::slider_ptr)

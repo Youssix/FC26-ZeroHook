@@ -411,8 +411,9 @@ namespace
                 const IID iid = __uuidof(ID3D12Resource);
                 void** scVt = *reinterpret_cast<void***>(sc);
                 using gbfn = HRESULT(*)(IDXGISwapChain*, UINT, const IID*, void**);
-                spoof_call(reinterpret_cast<gbfn>(scVt[dxgi_vtable::SwapChain::GetBuffer]),
+                HRESULT hr = spoof_call(reinterpret_cast<gbfn>(scVt[dxgi_vtable::SwapChain::GetBuffer]),
                     sc, i, &iid, reinterpret_cast<void**>(&pBuf));
+                if (FAILED(hr) || !pBuf) return false;
 
                 SpoofVCall(g_d3dDevice, d3d12_vtable::Device::CreateRenderTargetView,
                     (ID3D12Resource*)pBuf, (const D3D12_RENDER_TARGET_VIEW_DESC*)nullptr,
@@ -610,6 +611,7 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
                     reinterpret_cast<void**>(&g_frameCtx[i].cmdAllocator));
                 if (FAILED(hr) || !g_frameCtx[i].cmdAllocator) {
                     log::debug("[Present] FAIL: CreateCommandAllocator failed\r\n");
+                    TeardownD3D12();
                     return 0;
                 }
                 g_frameCtx[i].fenceValue = 0;
@@ -630,6 +632,7 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
             if (FAILED(hr) || !g_cmdList ||
                 SpoofVCall<HRESULT>(g_cmdList, d3d12_vtable::CmdList::Close) != S_OK) {
                 log::debug("[Present] FAIL: CreateCommandList or Close failed\r\n");
+                TeardownD3D12();
                 return 0;
             }
             log::debug("[Present] Command list created\r\n");
@@ -650,6 +653,7 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
             }
             if (FAILED(hr) || !g_rtvHeap) {
                 log::debug("[Present] FAIL: RTV heap creation failed\r\n");
+                TeardownD3D12();
                 return 0;
             }
 
@@ -669,8 +673,13 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
                     const IID iid = __uuidof(ID3D12Resource);
                     void** scVt = *reinterpret_cast<void***>(sc);
                     using gbfn = HRESULT(*)(IDXGISwapChain*, UINT, const IID*, void**);
-                    spoof_call(reinterpret_cast<gbfn>(scVt[dxgi_vtable::SwapChain::GetBuffer]),
+                    hr = spoof_call(reinterpret_cast<gbfn>(scVt[dxgi_vtable::SwapChain::GetBuffer]),
                         sc, i, &iid, reinterpret_cast<void**>(&pBuf));
+                    if (FAILED(hr) || !pBuf) {
+                        log::debug("[Present] FAIL: GetBuffer failed\r\n");
+                        TeardownD3D12();
+                        return 0;
+                    }
 
                     SpoofVCall(g_d3dDevice, d3d12_vtable::Device::CreateRenderTargetView,
                         (ID3D12Resource*)pBuf, (const D3D12_RENDER_TARGET_VIEW_DESC*)nullptr,
@@ -695,6 +704,7 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
             }
             if (FAILED(hr) || !g_fence) {
                 log::debug("[Present] FAIL: CreateFence failed\r\n");
+                TeardownD3D12();
                 return 0;
             }
             g_fenceValue = 1;
@@ -705,6 +715,7 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
                 (LPSECURITY_ATTRIBUTES)nullptr, (BOOL)FALSE, (BOOL)FALSE, (LPCWSTR)nullptr);
             if (!g_fenceEvent) {
                 log::debug("[Present] FAIL: CreateEventW (fence event) failed\r\n");
+                TeardownD3D12();
                 return 0;
             }
 
@@ -713,6 +724,7 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
             if (!g_renderer.Init(g_d3dDevice, DXGI_FORMAT_R8G8B8A8_UNORM))
             {
                 log::debug("[Present] FAIL: D3D12Renderer::Init returned false\r\n");
+                TeardownD3D12();
                 return 0;
             }
             log::debug("[Present] Renderer init OK\r\n");
@@ -936,6 +948,7 @@ void hook::install_present_render_hook_only()
     void** vtable = *(void***)offsets::SwapChain;
 
     log::debug("[ZeroHook] Installing Present + ResizeBuffers render hooks only\r\n");
+    overlay::SetMenuOnly(true);
     install_ept_hook(
         (unsigned char*)vtable[VTABLE_PRESENT],
         (void*)&HookedPresent,
@@ -959,6 +972,7 @@ void hook::install_dxgi_hooks()
 
     void** vtable = *(void***)offsets::SwapChain;
 
+    overlay::SetMenuOnly(false);
     install_ept_hook(
         (unsigned char*)vtable[VTABLE_PRESENT],
         (void*)&HookedPresent,
