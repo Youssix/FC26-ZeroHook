@@ -500,12 +500,6 @@ struct register_context_t
 
 // ===== Present detour =====
 
-extern "C" unsigned long long HookedPresentPassThrough(void*, void*,
-    unsigned int, unsigned int)
-{
-    return 0;
-}
-
 extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
     unsigned int syncInterval, unsigned int flags)
 {
@@ -902,50 +896,6 @@ extern "C" unsigned long long HookedResizeBuffers(void* ctx, void* pSwapChain,
 }
 
 // ===== Install DXGI hooks =====
-
-void hook::install_present_hook_only()
-{
-    // All offsets already resolved by offsets::Init()
-    if (!offsets::SwapChain)
-    {
-        log::debug("[ZeroHook] ERROR: SwapChain not resolved by offsets::Init()\r\n");
-        return;
-    }
-
-    void** vtable = *(void***)offsets::SwapChain;
-
-    log::debug("[ZeroHook] Installing Present hook only\r\n");
-    install_ept_hook(
-        (unsigned char*)vtable[VTABLE_PRESENT],
-        (void*)&HookedPresentPassThrough,
-        "PresentPassThrough");
-}
-
-void hook::install_present_render_hook_only()
-{
-    // All offsets already resolved by offsets::Init()
-    if (!offsets::SwapChain)
-    {
-        log::debug("[ZeroHook] ERROR: SwapChain not resolved by offsets::Init()\r\n");
-        return;
-    }
-
-    void** vtable = *(void***)offsets::SwapChain;
-
-    log::debug("[ZeroHook] Installing Present + ResizeBuffers render hooks only\r\n");
-    overlay::SetMenuOnly(true);
-    install_ept_hook(
-        (unsigned char*)vtable[VTABLE_PRESENT],
-        (void*)&HookedPresent,
-        "PresentRenderOnly");
-
-    install_ept_hook(
-        (unsigned char*)vtable[VTABLE_RESIZE_BUFFERS],
-        (void*)&HookedResizeBuffers,
-        "ResizeBuffersRenderOnly");
-}
-
-// ===== Install all DXGI hooks =====
 void hook::install_dxgi_hooks()
 {
     // All offsets already resolved by offsets::Init()

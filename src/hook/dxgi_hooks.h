@@ -3,7 +3,5 @@
 
 namespace hook
 {
-    void install_present_hook_only();
-    void install_present_render_hook_only();
     void install_dxgi_hooks();
 }
