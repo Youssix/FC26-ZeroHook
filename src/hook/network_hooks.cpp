@@ -10,10 +10,11 @@
 #include "../menu/toast.h"
 #include "../log/log.h"
 #include "../log/fmt.h"
-#include "../log/breadcrumb.h"
 
 // Bypass flag — true only while WE are sending an attack opcode
 volatile bool hook::g_allow_attack_send = false;
+volatile bool hook::g_network_fast_passthrough = false;
+volatile bool hook::g_network_hook_installed = false;
 volatile bool hook::g_bypass_alt_tab = false;
 
 namespace
@@ -21,6 +22,7 @@ namespace
     __declspec(align(4096)) ept::ept_hook_install_params_t g_netHookParams = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_altTabHookParams = {};
     __declspec(align(4096)) ept::ept_hook_install_params_t g_matchTimerHookParams = {};
+    unsigned char* g_routeGameMessageHookTarget = nullptr;
 
     // MatchTimer state — tracks previous frame's match clock to detect kickoff transition
     volatile float g_matchPrevTime = 0.0f;
@@ -74,6 +76,9 @@ namespace
         char a6,
         int a7)
     {
+        if (hook::g_network_fast_passthrough)
+            return 0;
+
         if (!a2 || !a3) return 0;
 
         // Preserve the original RAX value so when we return 0 (pass through),
@@ -284,17 +289,58 @@ namespace
 
 void hook::install_network_hooks()
 {
+    if (hook::g_network_hook_installed)
+    {
+        log::debug("[ZeroHook] RouteGameMessage hook already installed\r\n");
+        return;
+    }
+
     if (offsets::FnRouteGameMessage)
     {
-        ept::install_hook(g_netHookParams,
+        unsigned char* resolved_target = nullptr;
+        bool ok = ept::install_hook(g_netHookParams,
             (unsigned char*)offsets::FnRouteGameMessage,
-            (void*)&HookedRouteGameMessage, "RouteGameMessage");
-        log::debug("[ZeroHook] RouteGameMessage hooked (crash/freeze protection)\r\n");
+            (void*)&HookedRouteGameMessage, "RouteGameMessage", &resolved_target);
+
+        if (ok)
+        {
+            g_routeGameMessageHookTarget = resolved_target;
+            hook::g_network_hook_installed = true;
+            log::debug("[ZeroHook] RouteGameMessage hooked (crash/freeze protection)\r\n");
+        }
+        else
+        {
+            log::debug("[ZeroHook] WARNING: RouteGameMessage hook install failed\r\n");
+        }
     }
     else
     {
         log::debug("[ZeroHook] WARNING: RouteGameMessage not found, protection disabled\r\n");
     }
+}
+
+bool hook::remove_network_hooks()
+{
+    if (!hook::g_network_hook_installed || !g_routeGameMessageHookTarget)
+    {
+        log::debug("[ZeroHook] RouteGameMessage hook is not installed\r\n");
+        return false;
+    }
+
+    bool ok = ept::remove_hook(g_routeGameMessageHookTarget, "RouteGameMessage");
+    if (ok)
+    {
+        g_routeGameMessageHookTarget = nullptr;
+        hook::g_network_hook_installed = false;
+        hook::g_network_fast_passthrough = false;
+        log::debug("[ZeroHook] RouteGameMessage hook removed\r\n");
+    }
+    else
+    {
+        log::debug("[ZeroHook] WARNING: RouteGameMessage hook remove failed\r\n");
+    }
+
+    return ok;
 }
 
 void hook::install_alttab_hook()
@@ -324,8 +370,7 @@ void hook::install_alttab_hook()
 // that page maps back to MatchTimer (directly or transitively), we would
 // re-enter this handler with our partially-updated state. On the wrong CPU
 // microcode, nested EPT exits can also corrupt the hypervisor's internal
-// state → PC freeze/restart. We bail out hard on reentry and leave a
-// breadcrumb so affected users' logs show it.
+// state → PC freeze/restart. We bail out hard on reentry.
 static thread_local unsigned int tl_matchTimerDepth = 0;
 
 // Tick heartbeat — 1-in-N sampled, never per-frame. Used to tell "hook
@@ -344,13 +389,6 @@ extern "C" unsigned long long HookedMatchTimer(
     if (tl_matchTimerDepth != 0)
     {
         g_matchTimerReentryCount++;
-        if (g_debugLog) {
-            char rb[96];
-            fmt::snprintf(rb, sizeof(rb),
-                "matchtimer:REENTRY depth=%u total=%llu",
-                tl_matchTimerDepth, (unsigned long long)g_matchTimerReentryCount);
-            breadcrumb::set(rb);
-        }
         return 0;  // pass through, touch nothing else
     }
     tl_matchTimerDepth = 1;
@@ -377,9 +415,6 @@ extern "C" unsigned long long HookedMatchTimer(
         if (prev_time <= 0.0f && current_time > 0.0f)
         {
             // Kickoff frame — condition is inherently one-shot per match.
-            // This is the dangerous path — breadcrumb every step because
-            // this is exactly where affected clients freeze.
-            breadcrumb::set("matchtimer:kickoff_enter");
 
             // NOTE: %.4f is not supported by fmt::vsnprintf; fall back to raw bits
             log::debugf(
@@ -394,23 +429,17 @@ extern "C" unsigned long long HookedMatchTimer(
             // our own one-shot latch prevents spam. Arming at the transition
             // frame matches the cheat's observed window.
             ai_control::g_kickoffArmed = true;
-            breadcrumb::set("matchtimer:armed");
 
 #ifndef STANDARD_BUILD
             if (ai_difficulty::g_localLegendary)
             {
-                breadcrumb::set("matchtimer:kickoff_sending_local_legendary");
                 ai_difficulty::send_local_legendary();
-                breadcrumb::set("matchtimer:kickoff_sent_local_legendary");
             }
             if (ai_difficulty::g_opponentBeginner)
             {
-                breadcrumb::set("matchtimer:kickoff_sending_opponent_beginner");
                 ai_difficulty::send_opponent_beginner();
-                breadcrumb::set("matchtimer:kickoff_sent_opponent_beginner");
             }
 #endif
-            breadcrumb::set("matchtimer:kickoff_exit");
         }
         else if (prev_time > 0.0f && current_time <= 0.0f)
         {
@@ -420,14 +449,12 @@ extern "C" unsigned long long HookedMatchTimer(
             ai_control::g_aiTakeoverFired = false;
             ai_control::ResetCapture();  // clear ourPlayerId so next match's broadcast refreshes it
             log::debug("[MatchTimer] match ended — g_kickoffArmed=false\r\n");
-            breadcrumb::set("matchtimer:match_ended");
         }
 
         g_matchPrevTime = current_time;
     }
     __except (1) {
         // Swallow — never break the game's match timer
-        breadcrumb::set("matchtimer:EXCEPTION_in_body");
     }
 
     tl_matchTimerDepth = 0;
@@ -439,7 +466,6 @@ void hook::install_match_timer_hook()
     if (!offsets::FnMatchTimer)
     {
         log::debug("[ZeroHook] WARNING: MatchTimer not found, AI difficulty trigger disabled\r\n");
-        breadcrumb::set("matchtimer:install_SKIPPED_null_offset");
         return;
     }
 
@@ -473,7 +499,6 @@ void hook::install_match_timer_hook()
                 prologue[i] = ((unsigned char*)fnAddr)[i];
         } __except (1) {
             log::debug("[MatchTimer] EXCEPTION reading prologue — aborting hook install\r\n");
-            breadcrumb::set("matchtimer:install_ABORT_prologue_faulted");
             return;
         }
 
@@ -489,17 +514,14 @@ void hook::install_match_timer_hook()
     else
     {
         log::debug("[MatchTimer] WARNING: FnMatchTimer is OUTSIDE game module — pattern scan likely false-positive. Aborting install to prevent hypervisor corruption.\r\n");
-        breadcrumb::set("matchtimer:install_ABORT_out_of_module");
         return;
     }
 
-    breadcrumb::set("matchtimer:install_pre_ept");
     bool ok = ept::install_hook(g_matchTimerHookParams,
         (unsigned char*)offsets::FnMatchTimer,
         (void*)&HookedMatchTimer, "MatchTimer");
     log::debugf(
         "[ZeroHook] MatchTimer hook install returned %d\r\n", ok ? 1 : 0);
-    breadcrumb::set(ok ? "matchtimer:install_ok" : "matchtimer:install_FAILED");
 }
 
 void hook::install_playerside_hook()
@@ -658,4 +680,3 @@ void hook::install_eaid_hook()
         (void*)&HookedEAID, "EAID");
     log::debug("[ZeroHook] EAID hooked\r\n");
 }
-

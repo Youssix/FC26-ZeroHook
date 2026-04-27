@@ -3,7 +3,7 @@
 #include <cstdarg>
 #include "fmt.h"
 
-inline constexpr bool g_debugLog = true;
+inline constexpr bool g_debugLog = false;
 
 
 namespace log

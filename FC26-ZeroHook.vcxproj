@@ -164,7 +164,6 @@
     <ClInclude Include="src\hook\network_hooks.h" />
     <ClInclude Include="src\hook\reloc.h" />
     <ClInclude Include="src\input\frostbite_input.h" />
-    <ClInclude Include="src\log\breadcrumb.h" />
     <ClInclude Include="src\log\fmt.h" />
     <ClInclude Include="src\log\log.h" />
     <ClInclude Include="src\menu\custommenu.h" />

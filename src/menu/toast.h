@@ -60,6 +60,14 @@ namespace toast
         e.message[i] = '\0';
     }
 
+    inline bool HasActive()
+    {
+        if (!g_enabled) return false;
+        for (int i = 0; i < MAX_TOASTS; i++)
+            if (g_toasts[i].active) return true;
+        return false;
+    }
+
     // ── Tick + Render (call once per frame) ──
     inline void Render(D3D12Renderer& renderer, float screenW, float screenH, float dt)
     {

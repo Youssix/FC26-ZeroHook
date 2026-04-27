@@ -74,7 +74,12 @@ namespace ept
     }
 
     // Page-aligned params — each caller gets their own via __declspec(align(4096))
-    inline bool install_hook(ept_hook_install_params_t& params, unsigned char* target, void* detour, const char* name)
+    inline bool install_hook(
+        ept_hook_install_params_t& params,
+        unsigned char* target,
+        void* detour,
+        const char* name,
+        unsigned char** resolved_target = nullptr)
     {
         log::debugf("[ZeroHook] %s: %p\r\n", name, target);
 
@@ -108,6 +113,9 @@ namespace ept
             else
                 break;
         }
+
+        if (resolved_target)
+            *resolved_target = target;
 
         log::debugf(
             "[ZeroHook] %s prologue: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
@@ -157,6 +165,23 @@ namespace ept
 
         log::debugf("[ZeroHook] %s hook: status=%u, result=%llu\r\n",
                     name, req.status, req.result);
+
+        return req.status == 0 && req.result != 0;
+    }
+
+    inline bool remove_hook(unsigned char* target, const char* name)
+    {
+        if (!target)
+            return false;
+
+        implant_request_t req = {};
+        req.command = CMD_REMOVE_EPT_HOOK;
+        req.param1 = (unsigned long long)target;
+
+        ntclose_syscall(NTCLOSE_MAGIC, (unsigned long long)&req);
+
+        log::debugf("[ZeroHook] %s remove: target=%p status=%u result=%llu\r\n",
+            name, target, req.status, req.result);
 
         return req.status == 0 && req.result != 0;
     }

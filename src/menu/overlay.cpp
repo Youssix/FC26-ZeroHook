@@ -27,6 +27,8 @@ namespace
 {
     bool           g_initialized = false;
     bool           g_rageReady   = false;
+    bool           g_menuOnly    = false;
+    bool           g_gameInitDone = false;
     D3D12Renderer* g_rendererPtr = nullptr;
     LARGE_INTEGER  g_lastTime    = {};
 
@@ -150,6 +152,15 @@ namespace
     bool g_noBooking     = false;
 }
 
+void overlay::SetMenuOnly(bool menuOnly)
+{
+    if (g_menuOnly && !menuOnly) {
+        g_gameInitDone = false;
+        g_rageReady = false;
+    }
+    g_menuOnly = menuOnly;
+}
+
 void overlay::Init(D3D12Renderer* renderer)
 {
     log::debug("[OVL-INIT] overlay::Init entered\r\n");
@@ -163,18 +174,18 @@ void overlay::Init(D3D12Renderer* renderer)
     __try { CustomMenu::g_menu.Init(renderer); }
     __except (1) { log::debug("[OVL-INIT] EXCEPTION in CustomMenu::Init\r\n"); return; }
 
-    CustomMenu::g_menu.SetOpen(true);
+    CustomMenu::g_menu.SetOpen(false);
 
     // Only do one-time game init on first call — resizes only need renderer re-init
-    static bool s_gameInitDone = false;
-    if (!s_gameInitDone)
+    if (!g_gameInitDone)
     {
         log::debug("[OVL-INIT] FrostbiteInput::Init...\r\n");
         __try { FrostbiteInput::Init(); }
         __except (1) { log::debug("[OVL-INIT] EXCEPTION in FrostbiteInput::Init\r\n"); }
 
-        // Scan rage + slider offsets (pattern scan needs game module)
-        if (offsets::GameBase && offsets::GameSize)
+        // Scan feature offsets only in full mode. Phase 45 is menu/render only
+        // and must not spend CPU on unrelated feature initialization.
+        if (!g_menuOnly && offsets::GameBase && offsets::GameSize)
         {
             log::debug("[OVL-INIT] rage::InitOffsets...\r\n");
             __try { g_rageReady = rage::InitOffsets(offsets::GameBase, offsets::GameSize); }
@@ -211,25 +222,29 @@ void overlay::Init(D3D12Renderer* renderer)
             __try { proclub::Init(offsets::GameBase, offsets::GameSize); }
             __except (1) { log::debug("[OVL-INIT] EXCEPTION in proclub::Init\r\n"); }
         } else {
-            log::debug("[OVL-INIT] SKIP feature inits — GameBase/GameSize are NULL\r\n");
+            log::debug(g_menuOnly
+                ? "[OVL-INIT] SKIP feature inits — menu-only mode\r\n"
+                : "[OVL-INIT] SKIP feature inits — GameBase/GameSize are NULL\r\n");
         }
 
         QueryPerformanceFrequency(&g_freq);
         QueryPerformanceCounter(&g_lastTime);
 
 #ifndef STANDARD_BUILD
-        log::debug("[OVL-INIT] RegisterSliderHotkeys...\r\n");
-        __try { RegisterSliderHotkeys(); }
-        __except (1) { log::debug("[OVL-INIT] EXCEPTION in RegisterSliderHotkeys\r\n"); }
+        if (!g_menuOnly) {
+            log::debug("[OVL-INIT] RegisterSliderHotkeys...\r\n");
+            __try { RegisterSliderHotkeys(); }
+            __except (1) { log::debug("[OVL-INIT] EXCEPTION in RegisterSliderHotkeys\r\n"); }
 
-        if (g_rageReady) {
-            log::debug("[OVL-INIT] RegisterRageHotkeys...\r\n");
-            __try { RegisterRageHotkeys(); }
-            __except (1) { log::debug("[OVL-INIT] EXCEPTION in RegisterRageHotkeys\r\n"); }
+            if (g_rageReady) {
+                log::debug("[OVL-INIT] RegisterRageHotkeys...\r\n");
+                __try { RegisterRageHotkeys(); }
+                __except (1) { log::debug("[OVL-INIT] EXCEPTION in RegisterRageHotkeys\r\n"); }
+            }
         }
 #endif
 
-        s_gameInitDone = true;
+        g_gameInitDone = true;
         log::debug("[OVL-INIT] === game init complete ===\r\n");
     }
 
@@ -242,40 +257,85 @@ bool overlay::IsInitialized()
     return g_initialized;
 }
 
-void overlay::Frame(float screenW, float screenH)
+void overlay::PollHotkeys()
+{
+    if (!FrostbiteInput::IsReady()) return;
+
+    static unsigned s_pollFrame = 0;
+    constexpr unsigned kClosedMenuPollStride = 4;
+    if (!CustomMenu::g_menu.IsOpen())
+    {
+        if (++s_pollFrame < kClosedMenuPollStride)
+            return;
+        s_pollFrame = 0;
+    }
+    else
+    {
+        s_pollFrame = 0;
+    }
+
+    static bool prevInsert = false, prevF5 = false;
+    bool curInsert = FrostbiteInput::IsVKeyDown(VK_INSERT);
+    bool curF5     = FrostbiteInput::IsVKeyDown(VK_F5);
+    if ((curInsert && !prevInsert) || (curF5 && !prevF5))
+        CustomMenu::g_menu.Toggle();
+    prevInsert = curInsert;
+    prevF5     = curF5;
+
+    if (!g_menuOnly)
+        menu::CheckHotkeys();
+}
+
+bool overlay::NeedsFrame()
+{
+    if (CustomMenu::g_menu.IsOpen())
+        return true;
+
+    if (!g_menuOnly && opp_info::IsHooked() && opp_info::g_showWindow)
+        return true;
+
+    return toast::HasActive();
+}
+
+bool overlay::Frame(float screenW, float screenH)
 {
     static bool s_first = true;
 
-    if (s_first) log::debug("[OVL] BlockInput(false)\r\n");
-    FrostbiteInput::BlockGameInput(false);
-
-    if (s_first) log::debug("[OVL] CheckHotkeys\r\n");
-    menu::CheckHotkeys();
-
     // Per-frame: apply Pro Club Search Alone EPT patch on toggle change
-    __try { proclub::Update(); }
-    __except (1) { if (s_first) log::debug("[OVL] EXCEPTION in proclub::Update\r\n"); }
+    if (!g_menuOnly) {
+        __try { proclub::Update(); }
+        __except (1) { if (s_first) log::debug("[OVL] EXCEPTION in proclub::Update\r\n"); }
+    }
 
-    // Menu toggle — manual edge detect (FC26 pattern)
+    const bool menuVisible = CustomMenu::g_menu.IsOpen();
+    const bool opponentWindowVisible = !g_menuOnly && opp_info::IsHooked() && opp_info::g_showWindow;
+    const bool toastVisible = toast::HasActive();
+
+    // R6-style fast path: if nothing is visible, do not build menu widgets and
+    // let Present skip command-list reset/barriers/Execute/Signal entirely.
+    if (!menuVisible && !opponentWindowVisible)
     {
-        static bool prevInsert = false, prevF5 = false;
-        bool curInsert = FrostbiteInput::IsVKeyDown(VK_INSERT);
-        bool curF5     = FrostbiteInput::IsVKeyDown(VK_F5);
-        if ((curInsert && !prevInsert) || (curF5 && !prevF5))
-            CustomMenu::g_menu.Toggle();
-        prevInsert = curInsert;
-        prevF5     = curF5;
+        if (toastVisible && g_rendererPtr)
+        {
+            LARGE_INTEGER now;
+            QueryPerformanceCounter(&now);
+            float dt = (float)(now.QuadPart - g_lastTime.QuadPart) / (float)g_freq.QuadPart;
+            g_lastTime = now;
+            if (dt > 0.1f) dt = 0.1f;
+            toast::Render(*g_rendererPtr, screenW, screenH, dt);
+            if (s_first) { log::debug("[OVL] Done\r\n"); s_first = false; }
+            return true;
+        }
+
+        if (s_first) { log::debug("[OVL] Done\r\n"); s_first = false; }
+        return false;
     }
 
     if (s_first) log::debug("[OVL] GetMouse\r\n");
-    float mouseX   = (float)FrostbiteInput::GetMouseX();
-    float mouseY   = (float)FrostbiteInput::GetMouseY();
+    float mouseX    = (float)FrostbiteInput::GetMouseX();
+    float mouseY    = (float)FrostbiteInput::GetMouseY();
     bool  mouseDown = FrostbiteInput::IsMouseButtonDown(0);
-    float scroll   = (float)FrostbiteInput::GetMouseScroll();
-
-    if (s_first) log::debug("[OVL] ReBlock\r\n");
-    FrostbiteInput::BlockGameInput(
-        CustomMenu::g_menu.IsOpen() && CustomMenu::g_menu.WantsMouse());
+    float scroll    = (float)FrostbiteInput::GetMouseScroll();
 
     if (s_first) log::debug("[OVL] BeginFrame\r\n");
     CustomMenu::g_menu.SetScrollInput(scroll);
@@ -1163,6 +1223,32 @@ void overlay::Frame(float screenW, float screenH)
                 CustomMenu::g_menu.EndSection();
             }
 
+            if (CustomMenu::g_menu.BeginSection("Network Test"))
+            {
+                CustomMenu::g_menu.StatusIndicator("Network NPT Hook Installed",
+                    hook::g_network_hook_installed);
+
+                if (!hook::g_network_hook_installed)
+                {
+                    if (CustomMenu::g_menu.ButtonColored("Install Network NPT Hook",
+                        CustomMenu::Colors::Primary, -1, 28))
+                        hook::install_network_hooks();
+                }
+                else
+                {
+                    if (CustomMenu::g_menu.ButtonColored("Remove Network NPT Hook",
+                        CustomMenu::Colors::Secondary, -1, 28))
+                        hook::remove_network_hooks();
+                }
+
+                CustomMenu::g_menu.Toggle("Fast Pass RouteGameMessage",
+                    (bool*)&hook::g_network_fast_passthrough,
+                    "ON: network hook stays installed but immediately passes through. If FPS improves, detour logic is the problem. If not, NPT hook frequency is the problem.");
+                CustomMenu::g_menu.StatusIndicator("Fast Pass Active",
+                    hook::g_network_fast_passthrough);
+                CustomMenu::g_menu.EndSection();
+            }
+
             if constexpr (g_debugLog)
             {
                 if (CustomMenu::g_menu.BeginSection("Debug Logging"))
@@ -1265,6 +1351,11 @@ void overlay::Frame(float screenW, float screenH)
 
     CustomMenu::g_menu.EndFrame();
 
+    if (g_menuOnly) {
+        if (s_first) { log::debug("[OVL] Done\r\n"); s_first = false; }
+        return true;
+    }
+
     // ── Per-frame features (run even when menu is closed) ──
     if (g_rageReady && rage::slider_ptr)
     {
@@ -1338,4 +1429,5 @@ void overlay::Frame(float screenW, float screenH)
     }
 
     if (s_first) { log::debug("[OVL] Done\r\n"); s_first = false; }
+    return true;
 }
