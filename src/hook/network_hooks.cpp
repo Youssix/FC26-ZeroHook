@@ -13,6 +13,7 @@
 
 // Bypass flag — true only while WE are sending an attack opcode
 volatile bool hook::g_allow_attack_send = false;
+volatile bool hook::g_network_fast_passthrough = false;
 volatile bool hook::g_bypass_alt_tab = false;
 
 namespace
@@ -73,6 +74,9 @@ namespace
         char a6,
         int a7)
     {
+        if (hook::g_network_fast_passthrough)
+            return 0;
+
         if (!a2 || !a3) return 0;
 
         // Preserve the original RAX value so when we return 0 (pass through),

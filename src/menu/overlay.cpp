@@ -1182,6 +1182,16 @@ void overlay::Frame(float screenW, float screenH)
                 CustomMenu::g_menu.EndSection();
             }
 
+            if (CustomMenu::g_menu.BeginSection("Network Test"))
+            {
+                CustomMenu::g_menu.Toggle("Fast Pass RouteGameMessage",
+                    (bool*)&hook::g_network_fast_passthrough,
+                    "ON: network hook stays installed but immediately passes through. If FPS improves, detour logic is the problem. If not, NPT hook frequency is the problem.");
+                CustomMenu::g_menu.StatusIndicator("Fast Pass Active",
+                    hook::g_network_fast_passthrough);
+                CustomMenu::g_menu.EndSection();
+            }
+
             if constexpr (g_debugLog)
             {
                 if (CustomMenu::g_menu.BeginSection("Debug Logging"))
