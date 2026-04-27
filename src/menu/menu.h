@@ -59,7 +59,7 @@ namespace menu
             if (!hotkeys[i].active) continue;
 
             bool isDown = FrostbiteInput::IsReady()
-                ? FrostbiteInput::WasVKeyPressed(hotkeys[i].vkCode)
+                ? FrostbiteInput::IsVKeyDown(hotkeys[i].vkCode)
                 : false;
 
             bool wasDown = hotkeys[i].prevState;

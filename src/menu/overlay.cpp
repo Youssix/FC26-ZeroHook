@@ -174,7 +174,7 @@ void overlay::Init(D3D12Renderer* renderer)
     __try { CustomMenu::g_menu.Init(renderer); }
     __except (1) { log::debug("[OVL-INIT] EXCEPTION in CustomMenu::Init\r\n"); return; }
 
-    CustomMenu::g_menu.SetOpen(true);
+    CustomMenu::g_menu.SetOpen(false);
 
     // Only do one-time game init on first call — resizes only need renderer re-init
     if (!g_gameInitDone)
@@ -260,6 +260,19 @@ bool overlay::IsInitialized()
 void overlay::PollHotkeys()
 {
     if (!FrostbiteInput::IsReady()) return;
+
+    static unsigned s_pollFrame = 0;
+    constexpr unsigned kClosedMenuPollStride = 4;
+    if (!CustomMenu::g_menu.IsOpen())
+    {
+        if (++s_pollFrame < kClosedMenuPollStride)
+            return;
+        s_pollFrame = 0;
+    }
+    else
+    {
+        s_pollFrame = 0;
+    }
 
     static bool prevInsert = false, prevF5 = false;
     bool curInsert = FrostbiteInput::IsVKeyDown(VK_INSERT);
