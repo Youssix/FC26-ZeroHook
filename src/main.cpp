@@ -1,6 +1,5 @@
 #include <Windows.h>
 #include "log/log.h"
-#include "log/breadcrumb.h"
 #include "comms/comms.h"
 #include "hook/dxgi_hooks.h"
 #include "hook/network_hooks.h"
@@ -10,7 +9,7 @@
 #pragma comment(lib, "kernel32.lib")
 
 #ifndef ZH_AMD_WIN11_TEST_PHASE
-#define ZH_AMD_WIN11_TEST_PHASE 4
+#define ZH_AMD_WIN11_TEST_PHASE 5
 #endif
 
 #if (ZH_AMD_WIN11_TEST_PHASE < 1 || ZH_AMD_WIN11_TEST_PHASE > 5) && ZH_AMD_WIN11_TEST_PHASE != 45
@@ -47,28 +46,13 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
         }
 #endif
 
-#if ZH_AMD_WIN11_TEST_PHASE >= 4
-        breadcrumb::rescue_previous();  // salvage last-stage from prior session (if any)
-        breadcrumb::set("boot:dll_attach");
-#endif
-
 #if ZH_AMD_WIN11_TEST_PHASE == 4
-        breadcrumb::set("boot:before_present_hook");
-        hook::install_present_hook_only();     breadcrumb::set("boot:present_hooked");
+        hook::install_present_hook_only();
 #elif ZH_AMD_WIN11_TEST_PHASE == 45
-        breadcrumb::set("boot:before_present_render_hook");
-        hook::install_present_render_hook_only();  breadcrumb::set("boot:present_render_hooked");
+        hook::install_present_render_hook_only();
 #elif ZH_AMD_WIN11_TEST_PHASE >= 5
-        hook::install_dxgi_hooks();           breadcrumb::set("boot:dxgi_hooked");
-        hook::install_network_hooks();        breadcrumb::set("boot:network_hooked");
-        hook::install_playerside_hook();      breadcrumb::set("boot:playerside_hooked");
-        hook::install_match_timer_hook();     breadcrumb::set("boot:matchtimer_hooked");
-        hook::install_eaid_hook();            breadcrumb::set("boot:eaid_hooked");
-        ai_control::InstallStateMachineHook();  breadcrumb::set("boot:statemachine_hooked");
-             breadcrumb::set("boot:ai_trace_hooked");
-
-        bridge::init("FC26");
-        breadcrumb::set("boot:complete");
+        hook::install_present_render_hook_only();
+        hook::install_network_hooks();
 #endif
     }
 
