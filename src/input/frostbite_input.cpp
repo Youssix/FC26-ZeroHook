@@ -1,13 +1,7 @@
 #include "frostbite_input.h"
 #include "../offsets/offsets.h"
-#include "../hook/dxgi_hooks.h"
 #include "../log/log.h"
 #include "../log/fmt.h"
-
-void FrostbiteInput::BlockGameInput(bool block)
-{
-    hook::set_block_input(block);
-}
 
 bool FrostbiteInput::Init()
 {
@@ -39,6 +33,6 @@ bool FrostbiteInput::Init()
         (void*)s_reader, (void*)s_fnIsMouseDown);
 
     s_ready = true;
-    log::debug("[FBInput] Init OK (EPT hooks handle input blocking)\r\n");
+    log::debug("[FBInput] Init OK\r\n");
     return true;
 }

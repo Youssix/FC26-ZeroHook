@@ -3,7 +3,11 @@
 #include <cstdarg>
 #include "fmt.h"
 
-inline constexpr bool g_debugLog = true;
+#ifndef ZH_ENABLE_DEBUG_LOG
+#define ZH_ENABLE_DEBUG_LOG 0
+#endif
+
+inline constexpr bool g_debugLog = ZH_ENABLE_DEBUG_LOG != 0;
 
 
 namespace log

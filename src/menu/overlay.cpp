@@ -257,33 +257,41 @@ bool overlay::IsInitialized()
     return g_initialized;
 }
 
+void overlay::PollHotkeys()
+{
+    if (!FrostbiteInput::IsReady()) return;
+
+    static bool prevInsert = false, prevF5 = false;
+    bool curInsert = FrostbiteInput::IsVKeyDown(VK_INSERT);
+    bool curF5     = FrostbiteInput::IsVKeyDown(VK_F5);
+    if ((curInsert && !prevInsert) || (curF5 && !prevF5))
+        CustomMenu::g_menu.Toggle();
+    prevInsert = curInsert;
+    prevF5     = curF5;
+
+    if (!g_menuOnly)
+        menu::CheckHotkeys();
+}
+
+bool overlay::NeedsFrame()
+{
+    if (CustomMenu::g_menu.IsOpen())
+        return true;
+
+    if (!g_menuOnly && opp_info::IsHooked() && opp_info::g_showWindow)
+        return true;
+
+    return toast::HasActive();
+}
+
 bool overlay::Frame(float screenW, float screenH)
 {
     static bool s_first = true;
-
-    if (s_first) log::debug("[OVL] BlockInput(false)\r\n");
-    FrostbiteInput::BlockGameInput(false);
-
-    if (!g_menuOnly) {
-        if (s_first) log::debug("[OVL] CheckHotkeys\r\n");
-        menu::CheckHotkeys();
-    }
 
     // Per-frame: apply Pro Club Search Alone EPT patch on toggle change
     if (!g_menuOnly) {
         __try { proclub::Update(); }
         __except (1) { if (s_first) log::debug("[OVL] EXCEPTION in proclub::Update\r\n"); }
-    }
-
-    // Menu toggle — manual edge detect (FC26 pattern)
-    {
-        static bool prevInsert = false, prevF5 = false;
-        bool curInsert = FrostbiteInput::IsVKeyDown(VK_INSERT);
-        bool curF5     = FrostbiteInput::IsVKeyDown(VK_F5);
-        if ((curInsert && !prevInsert) || (curF5 && !prevF5))
-            CustomMenu::g_menu.Toggle();
-        prevInsert = curInsert;
-        prevF5     = curF5;
     }
 
     const bool menuVisible = CustomMenu::g_menu.IsOpen();
@@ -311,14 +319,10 @@ bool overlay::Frame(float screenW, float screenH)
     }
 
     if (s_first) log::debug("[OVL] GetMouse\r\n");
-    float mouseX   = (float)FrostbiteInput::GetMouseX();
-    float mouseY   = (float)FrostbiteInput::GetMouseY();
+    float mouseX    = (float)FrostbiteInput::GetMouseX();
+    float mouseY    = (float)FrostbiteInput::GetMouseY();
     bool  mouseDown = FrostbiteInput::IsMouseButtonDown(0);
-    float scroll   = (float)FrostbiteInput::GetMouseScroll();
-
-    if (s_first) log::debug("[OVL] ReBlock\r\n");
-    FrostbiteInput::BlockGameInput(
-        CustomMenu::g_menu.IsOpen() && CustomMenu::g_menu.WantsMouse());
+    float scroll    = (float)FrostbiteInput::GetMouseScroll();
 
     if (s_first) log::debug("[OVL] BeginFrame\r\n");
     CustomMenu::g_menu.SetScrollInput(scroll);

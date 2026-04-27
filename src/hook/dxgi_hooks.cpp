@@ -497,31 +497,6 @@ struct register_context_t
     unsigned long long rdi, rsi, rbp, rbx, rdx, rcx, rax;
 };
 
-// ===== Mouse input blocking (EPT hooks) =====
-static volatile bool g_blockInput = false;
-
-extern "C" unsigned long long HookedIsMouseDown(void* ctx, uintptr_t self, int btnId)
-{
-    if (g_blockInput) { ((register_context_t*)ctx)->rax = 0; return 1; }
-    return 0;
-}
-extern "C" unsigned long long HookedWasMousePressed(void* ctx, uintptr_t self, int btnId)
-{
-    if (g_blockInput) { ((register_context_t*)ctx)->rax = 0; return 1; }
-    return 0;
-}
-extern "C" unsigned long long HookedWasMouseReleased(void* ctx, uintptr_t self, int btnId)
-{
-    if (g_blockInput) { ((register_context_t*)ctx)->rax = 0; return 1; }
-    return 0;
-}
-extern "C" unsigned long long HookedGetMouseScroll(void* ctx, uintptr_t self)
-{
-    if (g_blockInput) { ((register_context_t*)ctx)->rax = 0; return 1; }
-    return 0;
-}
-
-void hook::set_block_input(bool block) { g_blockInput = block; }
 
 // ===== Present detour =====
 
@@ -786,6 +761,11 @@ extern "C" unsigned long long HookedPresent(void* ctx, void* pSwapChain,
         }
     }
 
+    overlay::PollHotkeys();
+
+    if (!overlay::NeedsFrame())
+        return 0;
+
     // Get current backbuffer index (FC26: direct call, no QI to SwapChain3)
     UINT bbIdx = SpoofVCall<UINT>((IDXGISwapChain*)pSwapChain, dxgi_vtable::SwapChain3::GetCurrentBackBufferIndex);
     if (bbIdx >= g_bufferCount) {
@@ -989,20 +969,5 @@ void hook::install_dxgi_hooks()
         (unsigned char*)vtable[VTABLE_RESIZE_BUFFERS],
         (void*)&HookedResizeBuffers,
         "ResizeBuffers");
-
-    // ── Mouse input EPT hooks (re-enabled with Jcc rel8 fix) ──
-    if (offsets::FnIsMouseDown)
-        install_ept_hook((unsigned char*)offsets::FnIsMouseDown,
-            (void*)&HookedIsMouseDown, "IsMouseDown");
-    if (offsets::FnWasMousePressed)
-        install_ept_hook((unsigned char*)offsets::FnWasMousePressed,
-            (void*)&HookedWasMousePressed, "WasMousePressed");
-    if (offsets::FnWasMouseReleased)
-        install_ept_hook((unsigned char*)offsets::FnWasMouseReleased,
-            (void*)&HookedWasMouseReleased, "WasMouseReleased");
-    if (offsets::FnGetMouseScroll)
-        install_ept_hook((unsigned char*)offsets::FnGetMouseScroll,
-            (void*)&HookedGetMouseScroll, "GetMouseScroll");
-    log::debug("[ZeroHook] Mouse input hooks RE-ENABLED (Jcc rel8 fix applied)\r\n");
 
 }

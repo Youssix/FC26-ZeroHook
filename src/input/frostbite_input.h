@@ -21,8 +21,6 @@ public:
 		return s_vkToScancode[vKey];
 	}
 
-	static void BlockGameInput(bool block);  // sets EPT hook blocking flag
-
 	// ── Keyboard (scan code) ──────────────────────────────────────────
 	static bool IsKeyDown(uint8_t scanCode) {
 		if (!s_ready) return false;
@@ -131,5 +129,4 @@ private:
 	inline static fn_int_t s_fnGetMouseDeltaX    = nullptr;
 	inline static fn_int_t s_fnGetMouseDeltaY    = nullptr;
 	inline static fn_int_t s_fnGetMouseScroll    = nullptr;
-
 };
