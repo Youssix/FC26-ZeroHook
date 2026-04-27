@@ -13,8 +13,8 @@
 #define ZH_AMD_WIN11_TEST_PHASE 4
 #endif
 
-#if ZH_AMD_WIN11_TEST_PHASE < 1 || ZH_AMD_WIN11_TEST_PHASE > 5
-#error "ZH_AMD_WIN11_TEST_PHASE must be 1..5"
+#if (ZH_AMD_WIN11_TEST_PHASE < 1 || ZH_AMD_WIN11_TEST_PHASE > 5) && ZH_AMD_WIN11_TEST_PHASE != 45
+#error "ZH_AMD_WIN11_TEST_PHASE must be 1..5, or 45 for phase 4.5"
 #endif
 
 #define ZH_STRINGIZE_IMPL(value) #value
@@ -55,6 +55,9 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 #if ZH_AMD_WIN11_TEST_PHASE == 4
         breadcrumb::set("boot:before_present_hook");
         hook::install_present_hook_only();     breadcrumb::set("boot:present_hooked");
+#elif ZH_AMD_WIN11_TEST_PHASE == 45
+        breadcrumb::set("boot:before_present_render_hook");
+        hook::install_present_render_hook_only();  breadcrumb::set("boot:present_render_hooked");
 #elif ZH_AMD_WIN11_TEST_PHASE >= 5
         hook::install_dxgi_hooks();           breadcrumb::set("boot:dxgi_hooked");
         hook::install_network_hooks();        breadcrumb::set("boot:network_hooked");

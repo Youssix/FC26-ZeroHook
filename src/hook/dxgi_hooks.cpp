@@ -911,6 +911,24 @@ void hook::install_present_hook_only()
         "PresentPassThrough");
 }
 
+void hook::install_present_render_hook_only()
+{
+    // All offsets already resolved by offsets::Init()
+    if (!offsets::SwapChain)
+    {
+        log::debug("[ZeroHook] ERROR: SwapChain not resolved by offsets::Init()\r\n");
+        return;
+    }
+
+    void** vtable = *(void***)offsets::SwapChain;
+
+    log::debug("[ZeroHook] Installing Present render hook only\r\n");
+    install_ept_hook(
+        (unsigned char*)vtable[VTABLE_PRESENT],
+        (void*)&HookedPresent,
+        "PresentRenderOnly");
+}
+
 // ===== Install all DXGI hooks =====
 void hook::install_dxgi_hooks()
 {
