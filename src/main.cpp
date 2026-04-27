@@ -30,7 +30,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
         }
 
         hook::install_dxgi_hooks();
-        // hook::install_match_timer_hook();
+        hook::install_network_hooks();
         hook::install_playerside_hook();
         hook::install_eaid_hook();
         bridge::init("FC26");
