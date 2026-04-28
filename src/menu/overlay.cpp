@@ -812,6 +812,9 @@ bool overlay::Frame(float screenW, float screenH)
                     if (CustomMenu::g_menu.ButtonColored("Crash Opponent", CustomMenu::Colors::Secondary, btnW, 28))
                         rage::crash_opps();
                     CustomMenu::g_menu.SameLine(btnW + 5);
+                    if (CustomMenu::g_menu.ButtonColored("Crash2 (vfunc)", CustomMenu::Colors::Secondary, btnW, 28))
+                        rage::crash_opps2();
+                    CustomMenu::g_menu.SameLine(btnW + 5);
                     char hkBuf[16]; fmt::snprintf(hkBuf, sizeof(hkBuf), "[%s]##hkc", menu::GetKeyName(hk_crash));
                     if (CustomMenu::g_menu.Button(hkBuf, 50, 28)) {
                         hk_bind_crash = true; menu::gIsBindingAnyHotkey = true;

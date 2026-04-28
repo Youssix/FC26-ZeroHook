@@ -30,6 +30,7 @@ namespace rage
     // Rage actions (Premium only)
 #ifndef STANDARD_BUILD
     void crash_opps();
+    void crash_opps2();         // Alt crash — calls via dispatch_action_vfunc thunk
     void pause_op_game();       // Freeze 1 (PC/XBOX)
     void pause_op_game_new();   // Freeze 2
     void slider_bomb();
