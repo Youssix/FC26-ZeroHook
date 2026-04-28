@@ -11,8 +11,10 @@
 #include "../spoof/spoof_call.hpp"
 
 // ── Globals ─────────────────────────────────────────────────────────
-uintptr_t rage::slider_ptr      = 0;
-uintptr_t rage::msg_dispatcher  = 0;
+uintptr_t rage::slider_ptr           = 0;
+uintptr_t rage::msg_dispatcher       = 0;
+uintptr_t rage::dispatch_action_vfunc = 0;
+static bool g_new_dispatch_chain     = false;
 
 // ── Helpers ─────────────────────────────────────────────────────────
 namespace
@@ -33,27 +35,33 @@ namespace
 
 // ── Public dispatcher resolver (used by rage actions + sliders) ─────
 //
-// Verified via CE on FC26.exe (post-update build):
-//   msg_dispatcher       = RIP-resolved global addr
-//   *msg_dispatcher      = intermediate wrapper (heap)
-//   **msg_dispatcher     = actual dispatcher object — passed as rcx
-//   ***msg_dispatcher    = vtable in FC26.exe data section
-//   vtable[9] = *(vtable+0x48) = real dispatch fn (Frostbite vtable[9] convention)
+// Two chains depending on build:
 //
-// Resolves the chain dynamically — no need to pattern-scan a thunk.
+// Legacy (pre-update):
+//   global → *global (wrapper) → **global (obj/rcx) → vtable[9]
+//
+// New (post-update, SynchedInputDispatcher routing layer added):
+//   global → *global (SynchedInputDispatcher A) → *(A+0x178) (raw obj/rcx) → vtable[9]
+//   Offset breakdown: A+0xA8 (routing base) + 0xD0 (raw dispatcher slot) = A+0x178
+//   Confirmed from sub_142192030 Path-C fallback in updated binary.
 bool rage::get_dispatch(uintptr_t& outRcx, dispatch_fn_t& outFn)
 {
     if (!rage::msg_dispatcher) return false;
 
-    uintptr_t v50 = safe_deref(rage::msg_dispatcher);
-    if (!v50) return false;
+    uintptr_t A = safe_deref(rage::msg_dispatcher);
+    if (!A) return false;
 
-    uintptr_t v51 = safe_deref(v50);
-    if (!v51) return false;
+    uintptr_t raw = 0;
+    if (g_new_dispatch_chain) {
+        raw = safe_deref(A + 0x178);
+    } else {
+        raw = safe_deref(A);
+    }
+    if (!raw) return false;
 
-    outRcx = v51;
+    outRcx = raw;
 
-    uintptr_t vtable = safe_deref(v51);
+    uintptr_t vtable = safe_deref(raw);
     if (!vtable) return false;
 
     uintptr_t fnAddr = safe_deref(vtable + 0x48);
@@ -78,20 +86,60 @@ bool rage::InitOffsets(void* gameBase, unsigned long gameSize)
         log::debug("[RAGE] ERROR: slider_ptr not found\r\n");
     }
 
-    // 2. RubberImmediateMsgDispatcher
+    // 2. Dispatcher global — two patterns for two build generations:
+    //
+    // New (post-update): the ONLINE/HOTJOIN send site calls sub_1424660F0() to get
+    // the SynchedInputDispatcher, then serializes payload, then walks to the raw
+    // dispatcher at SynchedInputDispatcher+0x178 for vtable[9].
+    // Pattern: call getter; xorps xmm0,xmm0; arg setup; mov rdi,rax (save obj);
+    //          call serializer; add rdi,0xA8 (routing base); jz
+    //
+    // Legacy (pre-update): getter returned raw dispatcher directly (2-level deref).
     void* m2 = game::pattern_scan(gameBase, gameSize,
-        "48 8B 05 ? ? ? ? C3 CC CC CC CC CC CC CC CC 48 8B 05 ? ? ? ? 48 8B 15");
+        "E8 ? ? ? ? 0F 57 C0 4C 8D 45 ? BA ? ? ? ? 48 8D 4D ? 0F 11 45 ? 48 8B F8 0F 11 45 ? E8 ? ? ? ? 48 81 C7 ? ? ? ? 74");
     if (m2) {
-        msg_dispatcher = resolve_rip3_7((uintptr_t)m2);
-        log::debugf("[RAGE] msg_dispatcher: %p\r\n", (void*)msg_dispatcher);
-    } else {
-        log::debug("[RAGE] ERROR: msg_dispatcher not found\r\n");
+        __try {
+            uintptr_t callSite  = (uintptr_t)m2;
+            uintptr_t getterFn  = callSite + 5 + *reinterpret_cast<int32_t*>(callSite + 1);
+            // getter is: 48 8B 05 XX XX XX XX C3  (mov rax,[rip+disp]; ret)
+            if (*(uint8_t*)getterFn == 0x48 && *(uint8_t*)(getterFn + 1) == 0x8B &&
+                *(uint8_t*)(getterFn + 2) == 0x05)
+            {
+                msg_dispatcher    = resolve_rip3_7(getterFn);
+                g_new_dispatch_chain = true;
+                log::debugf("[RAGE] msg_dispatcher (new chain +0x178): %p getter=%p\r\n",
+                    (void*)msg_dispatcher, (void*)getterFn);
+            }
+        } __except(1) {
+            log::debug("[RAGE] EXCEPTION resolving new getter\r\n");
+        }
     }
 
-    // dispatch_vfunc is no longer pattern-scanned. The .rodata thunk that
-    // matched was a generic vtable[9] dispatcher with no inner-object wrapper.
-    // get_dispatch() now resolves vtable[9] of the real dispatcher object at
-    // call time via msg_dispatcher chain, which is what the game itself does.
+    if (!msg_dispatcher) {
+        // Legacy pattern: getter sits adjacent to array-range helper, same CC padding.
+        void* m2l = game::pattern_scan(gameBase, gameSize,
+            "48 8B 05 ? ? ? ? C3 CC CC CC CC CC CC CC CC 48 8B 05 ? ? ? ? 48 8B 15");
+        if (m2l) {
+            msg_dispatcher = resolve_rip3_7((uintptr_t)m2l);
+            g_new_dispatch_chain = false;
+            log::debugf("[RAGE] msg_dispatcher (legacy chain): %p\r\n", (void*)msg_dispatcher);
+        }
+    }
+
+    if (!msg_dispatcher)
+        log::debug("[RAGE] ERROR: msg_dispatcher not found\r\n");
+
+    // 3. dispatch_action_vfunc — forwarder thunk that reads vtable[9] from rcx
+    //    and tail-jumps to it, cleaning two byte stack args first.
+    //    Pattern: mov rax,[rcx]; mov r10,[rax+48h]; movzx eax,[rsp+arg_30]; ...
+    void* m3 = game::pattern_scan(gameBase, gameSize,
+        "48 8B 01 4C 8B 50 48 0F B6 44 24");
+    if (m3) {
+        dispatch_action_vfunc = (uintptr_t)m3;
+        log::debugf("[RAGE] dispatch_action_vfunc: %p\r\n", (void*)dispatch_action_vfunc);
+    } else {
+        log::debug("[RAGE] dispatch_action_vfunc: NOT FOUND\r\n");
+    }
 
     bool ok = slider_ptr && msg_dispatcher;
     log::debugf("[RAGE] InitOffsets: %s\r\n", ok ? "ALL OK" : "SOME MISSING");

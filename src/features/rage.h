@@ -6,6 +6,9 @@ namespace rage
     // Pattern-scanned pointers (resolved in offsets::Init)
     extern uintptr_t slider_ptr;
     extern uintptr_t msg_dispatcher;
+    // Dispatch forwarder thunk: reads vtable[9] from rcx, tail-calls it.
+    // Removes need to resolve vtable[9] manually — usable as outFn directly.
+    extern uintptr_t dispatch_action_vfunc;
 
     // Frostbite dispatcher signature: vtable[9] of message dispatcher object.
     //   ((void(*)(this, opcode_a, opcode_b, payload, size, flag1, flag2))fn)(rcx, ...)
