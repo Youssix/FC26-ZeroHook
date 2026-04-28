@@ -172,16 +172,15 @@ void rage::crash_opps()
     log::debug("[RAGE] crash_opps: dispatching...\r\n");
 
     __try {
-        hook::g_allow_attack_send = true;
+        _InterlockedIncrement(&hook::g_pending_crash_sends);
         spoof_call(fn, (uint64_t)rcx, (uint64_t*)&v32, (uint64_t*)&v32,
             (void*)&v33, (int)1, (char)1, (unsigned char)0);
-        hook::g_allow_attack_send = false;
 
         toast::Show(toast::Type::Success, "Crash sent to opponent");
         log::debug("[RAGE] crash_opps: SUCCESS\r\n");
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
-        hook::g_allow_attack_send = false;
+        _InterlockedDecrement(&hook::g_pending_crash_sends);
         DWORD code = GetExceptionCode();
         log::debugf(
             "[RAGE] crash_opps: EXCEPTION 0x%08X — offsets are stale, game updated\r\n", code);
@@ -221,16 +220,15 @@ void rage::crash_opps2()
     int v33 = 0x90;
 
     __try {
-        hook::g_allow_attack_send = true;
+        _InterlockedIncrement(&hook::g_pending_crash_sends);
         spoof_call(reinterpret_cast<dispatch_fn_t>(dispatch_action_vfunc),
             (uint64_t)rcx, (uint64_t*)&v32, (uint64_t*)&v32,
             (void*)&v33, (int)1, (char)1, (unsigned char)0);
-        hook::g_allow_attack_send = false;
         toast::Show(toast::Type::Success, "Crash2 sent");
         log::debug("[RAGE] crash_opps2: SUCCESS\r\n");
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
-        hook::g_allow_attack_send = false;
+        _InterlockedDecrement(&hook::g_pending_crash_sends);
         log::debugf("[RAGE] crash_opps2: EXCEPTION 0x%08X\r\n", GetExceptionCode());
         toast::Show(toast::Type::Error, "Crash2 failed");
     }

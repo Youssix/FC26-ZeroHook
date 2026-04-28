@@ -1,9 +1,14 @@
 #pragma once
+#include <Windows.h>
 
 namespace hook
 {
-    // Bypass flag: set true while WE send crash/freeze, so our own hook lets it through
+    // Legacy bypass flag (kept for non-attack sends that don't need opcode tracking)
     extern volatile bool g_allow_attack_send;
+    // Per-opcode pending send counter: incremented before we queue an attack,
+    // decremented when the hook sees it pass through. Fixes the async race where
+    // g_allow_attack_send is reset before the network thread picks up the packet.
+    extern volatile LONG g_pending_crash_sends;
     // Runtime test switch: RouteGameMessage hook stays installed, but all
     // protection/parsing logic is bypassed and original game handler runs.
     extern volatile bool g_network_fast_passthrough;

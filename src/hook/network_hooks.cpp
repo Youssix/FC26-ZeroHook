@@ -13,6 +13,7 @@
 
 // Bypass flag — true only while WE are sending an attack opcode
 volatile bool hook::g_allow_attack_send = false;
+volatile LONG hook::g_pending_crash_sends = 0;
 volatile bool hook::g_network_fast_passthrough = false;
 volatile bool hook::g_network_hook_installed = false;
 volatile bool hook::g_bypass_alt_tab = false;
@@ -195,7 +196,21 @@ namespace
         }
 
         // Known crash opcodes (a2)
-        if (op2 == 0x2D1FDF90 || op2 == 0x9B142841 || op2 == 0x75879024 ||
+        // For 0x75879024: if WE queued this outgoing send (pending counter > 0),
+        // let it through once and decrement. Fixes the async race where
+        // g_allow_attack_send is already false by the time network thread fires the hook.
+        if (op2 == 0x75879024) {
+            if (hook::g_pending_crash_sends > 0) {
+                _InterlockedDecrement(&hook::g_pending_crash_sends);
+                log::debug("[PROTECT] Outgoing crash allowed (pending slot consumed)\r\n");
+                return 0;
+            }
+            toast::Show(toast::Type::Warning, "Blocked crash from opponent");
+            log::debug("[PROTECT] Blocked crash opcode\r\n");
+            ((ept::register_context_t*)ctx)->rax = 0;
+            return 1;
+        }
+        if (op2 == 0x2D1FDF90 || op2 == 0x9B142841 ||
             op2 == 0xF313C005 || op2 == 0x399143E7) {
             toast::Show(toast::Type::Warning, "Blocked crash from opponent");
             log::debug("[PROTECT] Blocked crash opcode\r\n");
